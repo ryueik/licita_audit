@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
+  <meta
+    name="description"
+    content="Ferramenta de auditoria e conformidade para processos licitatórios com base na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT."
+  />
+
+  <!-- ===================== Bibliotecas de terceiros (CDN) ===================== -->
+  <!-- PDF.js: extração de texto de arquivos PDF no navegador -->
+  <script
+    defer
+    src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+    integrity="sha512-ml/0MyCgxheEeQzF3s4UkKtC0hIh0cMZbXcVQXkQFBc9aZ1FKb1Er5mJvXaGZw3+ihE2PwJxHhkOiA0e2n5eY0Z1Q=="
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  ></script>
+  <!-- Mammoth.js: extração de texto de arquivos .docx -->
+  <script
+    defer
+    src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"
+    integrity="sha512-KGErH4Yq4ZrK5RhE7QD1AqX7j9Z8oR5l5cKZz8cN8QfVnG4eBpQyE0eH9vS3pJ8kC6yB2nO3Z6oP0yY5mS7hK1Qw=="
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  ></script>
+
+  <link rel="stylesheet" href="style.css" />
+  <script type="module" src="app.js"></script>
+</head>
+
+<body>
+  <!-- ============================ APLICAÇÃO ============================ -->
+  <div class="app">
+    <!-- ------------------------------ SIDEBAR ------------------------------ -->
+    <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
+      <header class="brand">
+        <div class="brand__mark" aria-hidden="true">§</div>
+        <div class="brand__text">
+          <h1>LicitaAudit</h1>
+          <p>Conformidade · Lei 14.133/2021</p>
+        </div>
+      </header>
+
+      <!-- 1. Upload -->
+      <section class="panel">
+        <h2 class="panel__title"><span class="step">1</span> Documentos do processo</h2>
+
+        <div
+          id="dropzone"
+          class="dropzone"
+          role="button"
+          tabindex="0"
+          aria-label="Arraste arquivos ou pressione Enter para selecionar documentos"
+        >
+          <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round" />
+          </svg>
+          <p class="dropzone__title"><strong>Arraste e solte</strong> os arquivos aqui</p>
+          <p class="dropzone__hint">ou clique para selecionar · PDF, DOCX, DOC, TXT</p>
+          <input
+            id="fileInput"
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
+            hidden
+          />
+        </div>
+
+        <ul id="fileList" class="file-list" aria-live="polite"></ul>
+
+        <div class="panel__actions">
+          <button id="analyzeBtn" class="btn btn--primary" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="m21 21-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" stroke-linecap="round" />
+            </svg>
+            Analisar conformidade
+          </button>
+          <button id="clearBtn" class="btn btn--ghost" type="button">Limpar</button>
+        </div>
+      </section>
+
+      <!-- 2. Parâmetros -->
+      <section class="panel">
+        <h2 class="panel__title"><span class="step">2</span> Parâmetros da análise</h2>
+
+        <label class="field">
+          <span class="field__label">Objeto predominante</span>
+          <select id="paramObjeto" class="select">
+            <option value="auto">Detectar automaticamente</option>
+            <option value="bens">Aquisição de bens</option>
+            <option value="servicos-comuns">Serviços comuns</option>
+            <option value="servicos-especiais">Serviços especiais / técnicos</option>
+            <option value="obras">Obras e serviços de engenharia</option>
+            <option value="alienacao">Alienação de bens</option>
+            <option value="intelectual">Trabalho técnico, científico ou artístico</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field__label">Modalidade declarada</span>
+          <select id="paramModalidade" class="select">
+            <option value="auto">Detectar automaticamente</option>
+            <option value="pregao">Pregão</option>
+            <option value="concorrencia">Concorrência</option>
+            <option value="concurso">Concurso</option>
+            <option value="leilao">Leilão</option>
+            <option value="dialogo">Diálogo Competitivo</option>
+            <option value="dispensa">Dispensa de Licitação</option>
+            <option value="inexigibilidade">Inexigibilidade de Licitação</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field__label">Critério de julgamento</span>
+          <select id="paramCriterio" class="select">
+            <option value="auto">Detectar automaticamente</option>
+            <option value="menor-preco">Menor preço</option>
+            <option value="maior-desconto">Maior desconto</option>
+            <option value="melhor-tecnica">Melhor técnica ou conteúdo artístico</option>
+            <option value="tecnica-preco">Técnica e preço</option>
+            <option value="maior-lance">Maior lance</option>
+            <option value="maior-retorno">Maior retorno econômico</option>
+          </select>
+        </label>
+      </section>
+
+      <!-- 3. Exportação -->
+      <section class="panel panel--last">
+        <h2 class="panel__title"><span class="step">3</span> Relatório</h2>
+        <button id="printBtn" class="btn btn--soft" type="button" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v7H8z" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Imprimir / Salvar PDF
+        </button>
+        <button id="jsonBtn" class="btn btn--soft" type="button" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M12 3v12m0 0-4-4m4 4 4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Exportar JSON
+        </button>
+      </section>
+
+      <p class="disclaimer">
+        Ferramenta de apoio à decisão. Não substitui parecer jurídico nem a análise
+        do agente de contratação.
+      </p>
+    </aside>
+
+    <!-- ------------------------------- MAIN ------------------------------- -->
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar__title">
+          <h2>Painel de Auditoria</h2>
+          <p id="topbarSubtitle">Nenhum documento carregado</p>
+        </div>
+        <button
+          id="themeToggle"
+          class="icon-btn"
+          type="button"
+          aria-label="Alternar tema claro/escuro"
+          title="Alternar tema"
+        >
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round" />
+          </svg>
+        </button>
+      </header>
+
+      <!-- Estado vazio -->
+      <section id="emptyState" class="empty-state">
+        <div class="empty-state__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" stroke-linejoin="round" />
+            <path d="M14 3v5h5M9 13h6M9 17h4" stroke-linecap="round" />
+          </svg>
+        </div>
+        <h3>Comece carregando os documentos do processo</h3>
+        <p>
+          Edital, Termo de Referência, Estudo Técnico Preliminar, Projeto Básico,
+          justificativas de dispensa ou inexigibilidade. O texto é extraído
+          <strong>localmente no seu navegador</strong> — nenhum arquivo é enviado a servidores.
+        </p>
+        <ul class="empty-state__tags">
+          <li>Art. 18 · ETP</li>
+          <li>Art. 23 · Estimativa de valor</li>
+          <li>Art. 28 · Modalidades</li>
+          <li>Art. 33 · Critérios de julgamento</li>
+          <li>Art. 55 · Prazos do edital</li>
+          <li>Art. 74 e 75 · Contratação direta</li>
+        </ul>
+      </section>
+
+      <!-- Relatório (renderizado dinamicamente) -->
+      <div id="report" class="report is-hidden" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <!-- Overlay de carregamento -->
+  <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
+    <div class="loader__box">
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="loaderText">Extraindo texto dos documentos…</p>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast is-hidden" role="alert"></div>
+</body>
+</html>
