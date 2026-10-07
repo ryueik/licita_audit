@@ -1,12 +1,9 @@
 /* ============================================================================
- * LicitaAudit · app.js — v7.1
+ * LicitaAudit · app.js — v7.3
  * ----------------------------------------------------------------------------
- * • Auditoria HÍBRIDA: cruzamento de metadados do processo × conteúdo dos arquivos
- * • Integração nativa com LicitaReq (parser de blocos + metadados estruturados)
- * • Notas do auditor por processo (persistidas em JSON e PDFs)
- * • Modal de Critérios Ativos (regras aplicáveis, N/A e fundamentos)
- * • Perfil editável por processo (Modalidade, Natureza, Critério)
- * • PDFs executivos: individual, consolidado e em lote
+ * • Requerimentos LicitaReq em seção dedicada + botão "Ver Conteúdo"
+ * • Visualizador de texto em modal com scroll
+ * • Auditoria híbrida · Notas · Critérios · Matriz dinâmica · PDFs
  * ========================================================================== */
 'use strict';
 
@@ -29,6 +26,9 @@ const els = {
   toast: $('#toast'),
   modal: $('#modal'), modalTitulo: $('#modalTitulo'), modalBody: $('#modalBody'),
   modalCriterios: $('#modalCriterios'), modalCriteriosTitulo: $('#modalCriteriosTitulo'), modalCriteriosBody: $('#modalCriteriosBody'),
+  modalVisualizador: $('#modalVisualizador'), modalVizTitulo: $('#modalVizTitulo'),
+  viewerFileName: $('#viewerFileName'), viewerFileInfo: $('#viewerFileInfo'), viewerText: $('#viewerText'),
+  btnCopiarTextoArq: $('#btnCopiarTextoArq'),
   sidebar: $('#sidebar'), sidebarToggle: $('#sidebarToggle'), sidebarOverlay: $('#sidebarOverlay'),
 };
 
@@ -108,7 +108,7 @@ const firstMatch = (text, rx) => {
 };
 
 /* ==========================================================================
- * 4. PARSER DE TEXTO — RADICAL-BASED
+ * 4. PARSER DE TEXTO
  * ======================================================================== */
 function extrairModalidade(corpus) {
   const rot = corpus.match(/(?:modalidade\s+(?:de\s+licita[cç][aã]o|licitat[oó]ria|adotada|declarada)|tipo\s+de\s+licita[cç][aã]o)\s*[:\-–—]\s*([^\n\r]{2,80})/i);
@@ -182,8 +182,6 @@ function extrairCriterio(corpus) {
   for (const [k, rx] of Object.entries(m)) if (rx.test(corpus)) return k;
   return 'indefinido';
 }
-
-/* ---------- Labels legíveis ---------- */
 function labelModalidade(chave) {
   return {
     pregao: 'Pregão Eletrônico', concorrencia: 'Concorrência', concurso: 'Concurso',
@@ -228,8 +226,6 @@ function classificarTipoObjeto(meta) {
   if (/servic/.test(nat))       return 'servicos';
   return 'servicos';
 }
-
-/* ---------- Detecção de escopo ---------- */
 function ehObjetoEngenharia(meta, natureza, corpus) {
   const blob = [meta?.objeto?.texto || '', meta?.objeto?.tipo || '', natureza || ''].join(' ');
   if (/(obra|engenharia|reforma|constru[cç][aã]o|pavimenta)/i.test(blob)) return true;
@@ -241,35 +237,19 @@ function ehObjetoBens(c) {
   const mod = (c.modalidade?.modalidade || '').toLowerCase();
   return tipo === 'bens' || /bens|material|equipament|computador|notebook|impressora|insumo|reativo|medicament|l[aâ]mpada/i.test(nat) || mod.includes('pregão');
 }
-function ehObjetoAlienacao(c) {
-  return /aliena/i.test(c.natureza || '') || /leil[aã]o/i.test(c.modalidade?.modalidade || '');
-}
-function ehObjetoConcurso(c) {
-  return /concurso/i.test(c.modalidade?.modalidade || '');
-}
-function ehObjetoInexigibilidade(c) {
-  return /inexigibilidade/i.test(c.modalidade?.modalidade || '');
-}
-function ehObjetoDispensa(c) {
-  return /dispensa/i.test(c.modalidade?.modalidade || '');
-}
-function ehObjetoDialogo(c) {
-  return /di[aá]logo/i.test(c.modalidade?.modalidade || '');
-}
+function ehObjetoAlienacao(c) { return /aliena/i.test(c.natureza || '') || /leil[aã]o/i.test(c.modalidade?.modalidade || ''); }
+function ehObjetoConcurso(c) { return /concurso/i.test(c.modalidade?.modalidade || ''); }
+function ehObjetoInexigibilidade(c) { return /inexigibilidade/i.test(c.modalidade?.modalidade || ''); }
+function ehObjetoDispensa(c) { return /dispensa/i.test(c.modalidade?.modalidade || ''); }
+function ehObjetoDialogo(c) { return /di[aá]logo/i.test(c.modalidade?.modalidade || ''); }
 function ehObjetoServicoIntelectual(c) {
   const blob = [c.natureza || '', c.meta?.objeto?.tipo || '', c.meta?.objeto?.texto || ''].join(' ').toLowerCase();
   return /(intelectual|consultoria|assessoria|parecer\s+t[eé]cnico|auditoria|advocat|jur[íi]dic|not[óo]ria\s+especializa|cient[íi]fic)/i.test(blob);
 }
 
 /* ==========================================================================
- * 5. PARSER LICITAREQ — INTEGRAÇÃO NATIVA
- * --------------------------------------------------------------------------
- * Detecta arquivos e conteúdo gerados pelo sistema LicitaReq e extrai
- * metadados estruturados (unidade, processo, valor, objeto, empresa
- * mencionada, sinais de emergência/inexigibilidade) que serão cruzados
- * com as regras dos checkpoints.
+ * 5. PARSER LICITAREQ
  * ======================================================================== */
-
 const LICITAREQ_SIGNATURES = [
   /licitareq/i,
   /requerimento[_\s-]*licitareq/i,
@@ -277,13 +257,11 @@ const LICITAREQ_SIGNATURES = [
   /motor\s+de\s+regras\s+—\s+lei\s+n[º°]?\s*14\.?133/i,
   /documento\s+gerado\s+eletronicamente\s+pelo\s+sistema\s+licitareq/i,
 ];
-
 const LICITAREQ_KEYWORDS = {
   unidade:    /(?:unidade\s+requisitante|setor\s+requisitante|remetente|origem)\s*[:\-–—]\s*([^\n]{3,90})/i,
-  processo:   /(memorando|of[íi]cio|processo|requerimento|expediente|dfd|documento\s+de\s+formaliza)/i,
   valor:      /R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i,
   objeto:     /(?:objeto|assunto)\s*[:\-–—]\s*([^\n]{6,200})/i,
-  objetoFull: /(?:objeto|assunto)\s*[:\-–—]\s*([\s\S]{6,600}?)(?=\n\s*\n|\n\s*\d+\.|\n\s*---|$)/i,
+  objetoFull: /(?:objeto|assunto)\s*[:\\-–—]\s*([\s\S]{6,600}?)(?=\n\s*\n|\n\s*\d+\.|\n\s*---|$)/i,
   emergencia: /(emerg[êe]ncial?|calamidade|desastre|risco\s+iminente|paralisa[çc][ãa]o)/i,
   inexigib:   /(inexigibilidade|not[óo]ria\s+especializa|exclusividade|inviabilidade\s+de\s+competi)/i,
   direc:      /(?:empresa|fornecedor|contrata[çc][aã]o\s+d[aeo]|junto\s+[àa])\s+([A-ZÀ-Ú][\wÀ-ú&.'-]*(?:\s+(?:[A-ZÀ-Ú][\wÀ-ú&.'-]*|de|da|do|e)){0,6}(?:\s+(?:Ltda\.?|S\.A\.?|ME|EIRELI|EPP))?)/i,
@@ -301,9 +279,7 @@ function parseLicitaReq(texto) {
     unidade: '', processo: '', valorTexto: '', valor: 0,
     objeto: '', empresa: '',
     emergencia: false, inexigibilidade: false,
-    rawBlocos: {},
   };
-
   const mU = texto.match(LICITAREQ_KEYWORDS.unidade);
   if (mU) out.unidade = mU[1].trim().slice(0, 120);
 
@@ -321,7 +297,6 @@ function parseLicitaReq(texto) {
 
   out.emergencia = LICITAREQ_KEYWORDS.emergencia.test(texto);
   out.inexigibilidade = LICITAREQ_KEYWORDS.inexigib.test(texto);
-
   return out;
 }
 
@@ -337,142 +312,67 @@ const BLOCO_TITULO = {
   6: 'Fiscalização e Execução',
 };
 
-/* ---------------------------------------------------------------------------
- * Cruzamento híbrido: cada regra pode usar:
- *   - c.corpus         → conteúdo bruto dos arquivos
- *   - c.meta           → metadados extraídos (objeto, valor, processo, etc.)
- *   - c.modalidade     → modalidade declarada (select) ou detectada
- *   - c.natureza       → natureza (select) ou detectada
- *   - c.criterio       → critério (select) ou detectado
- *   - c.licitareq      → dados estruturados extraídos de arquivo LicitaReq (ou null)
- *   - c.contrato       → objeto de metadados do processo
- * ------------------------------------------------------------------------ */
 const MATRIZ_CORE_30 = [
-  /* ============ BLOCO 1 — PLANEJAMENTO ============ */
-  { id:'B1_01', bloco:1, nome:'Justificativa da necessidade', fundamento:'Art. 18, §1º, I', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
-      const corpus = c.corpus;
-      const lr = c.licitareq;
-      return /\b(justific|motiva|necessidade|interesse\s+p[uú]blico|finalidade)/i.test(corpus)
-          || !!(lr && /(justific|necessidade|interesse)/i.test(lr.objeto || ''));
-    },
-    mensagemFalha:'Justificativa não identificada.', recomendacao:'Elaborar seção com motivação fática e jurídica.' },
-
-  { id:'B1_02', bloco:1, nome:'Descrição clara do objeto', fundamento:'Art. 18, §1º, II', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
+  { id:'B1_01', bloco:1, nome:'Justificativa da necessidade', fundamento:'Art. 18, §1º, I', severidade:'CRITICA', aplicavel:()=>true, test:c=>/\b(justific|motiva|necessidade|interesse\s+p[uú]blico|finalidade)/i.test(c.corpus) || !!(c.licitareq && /(justific|necessidade|interesse)/i.test(c.licitareq.objeto||'')), mensagemFalha:'Justificativa não identificada.', recomendacao:'Elaborar seção com motivação fática e jurídica.' },
+  { id:'B1_02', bloco:1, nome:'Descrição clara do objeto', fundamento:'Art. 18, §1º, II', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const tipo = c.meta.objeto.tipo || '';
-      const lrObjeto = c.licitareq?.objeto || '';
+      const lrObj = c.licitareq?.objeto || '';
       const chave = /(aquisi[cç][aã]o|fornecimento|presta[cç][aã]o|servi[çc]o|bem|material|equipament|software|obra|produto|insumo)/i.test(c.corpus);
-      return tipo !== 'Não identificado' || chave || lrObjeto.length > 15;
-    },
-    mensagemFalha:'Objeto insuficiente ou ambíguo.', recomendacao:'Descrever com especificações técnicas precisas.' },
-
-  { id:'B1_03', bloco:1, nome:'Estimativa de quantitativos', fundamento:'Art. 18, §1º, III', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(quantidade|qtd|\blotes?\b|\d+\s*(unid|un|pç|pc|cx|kg|l|m²|m³|resma|itens?)|\(\s*\d+\s*\))/i.test(c.corpus),
-    mensagemFalha:'Quantitativos não explicitados.', recomendacao:'Apresentar planilha quantitativa.' },
-
-  { id:'B1_04', bloco:1, nome:'ETP ou Termo de Referência', fundamento:'Art. 6º, XXIII e XXV', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => /(estudo\s+t[eé]cnico\s+preliminar|\bETP\b|termo\s+de\s+refer[eê]ncia|\bTR\b|projeto\s+b[aá]sico|\bPB\b|anteprojeto)/i.test(c.corpus),
-    mensagemFalha:'Documento estruturante ausente.', recomendacao:'Anexar ETP e TR (ou Projeto Básico).' },
-
+      return tipo !== 'Não identificado' || chave || lrObj.length > 15;
+    }, mensagemFalha:'Objeto insuficiente.', recomendacao:'Descrever com especificações precisas.' },
+  { id:'B1_03', bloco:1, nome:'Estimativa de quantitativos', fundamento:'Art. 18, §1º, III', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(quantidade|qtd|\blotes?\b|\d+\s*(unid|un|pç|pc|cx|kg|l|m²|m³|resma|itens?)|\(\s*\d+\s*\))/i.test(c.corpus), mensagemFalha:'Quantitativos não explicitados.', recomendacao:'Apresentar planilha quantitativa.' },
+  { id:'B1_04', bloco:1, nome:'ETP ou Termo de Referência', fundamento:'Art. 6º, XXIII e XXV', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(estudo\s+t[eé]cnico\s+preliminar|\bETP\b|termo\s+de\s+refer[eê]ncia|\bTR\b|projeto\s+b[aá]sico|\bPB\b|anteprojeto)/i.test(c.corpus), mensagemFalha:'Documento estruturante ausente.', recomendacao:'Anexar ETP e TR.' },
   { id:'B1_05', bloco:1, nome:'Decisão sobre parcelamento', fundamento:'Art. 47', severidade:'MEDIA',
     aplicavel: c => !ehObjetoAlienacao(c) && !ehObjetoConcurso(c) && !ehObjetoInexigibilidade(c),
     motivoNA: 'Regra não aplicável a alienações, concursos ou contratações diretas.',
     test: c => /(parcelament|divis[aã]o\s+em\s+lotes|indivis[íi]vel|lote\s+[uú]nico|n[aã]o\s+parcel)/i.test(c.corpus),
-    mensagemFalha:'Sem decisão sobre parcelamento.', recomendacao:'Motivar parcelamento ou indivisibilidade (Art. 47).' },
-
+    mensagemFalha:'Sem decisão sobre parcelamento.', recomendacao:'Motivar parcelamento ou indivisibilidade.' },
   { id:'B1_06', bloco:1, nome:'Formalização da demanda (LicitaReq)', fundamento:'Art. 18, §§1º e 2º', severidade:'MEDIA',
     aplicavel: () => true,
-    test: c => {
-      const corpus = c.corpus;
-      const arquivoLR = c.arquivo?.licitareq;
-      return arquivoLR || /(documento\s+de\s+formaliza[çc][aã]o\s+de\s+demanda|\bDFD\b|memorando\s+n|requerimento)/i.test(corpus);
-    },
-    mensagemFalha:'Formalização da demanda não identificada.',
-    recomendacao:'Anexar DFD, Memorando ou Requerimento formalizando a demanda (Art. 18, §§1º e 2º).' },
+    test: c => c.arquivo?.licitareq || /(documento\s+de\s+formaliza[çc][aã]o\s+de\s+demanda|\bDFD\b|memorando\s+n|requerimento)/i.test(c.corpus),
+    mensagemFalha:'Formalização da demanda não identificada.', recomendacao:'Anexar DFD ou Memorando (Art. 18, §§1º e 2º).' },
 
-  /* ============ BLOCO 2 — RECURSOS ============ */
-  { id:'B2_01', bloco:2, nome:'Estimativa de valor', fundamento:'Art. 23', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => c.meta.valor > 0 || firstMatch(c.corpus, KB.orcamento) || !!(c.licitareq?.valor > 0),
-    mensagemFalha:'Estimativa de valor ausente.', recomendacao:'Elaborar planilha orçamentária com múltiplas fontes.' },
-
-  { id:'B2_02', bloco:2, nome:'Dotação orçamentária', fundamento:'Art. 18, §1º, V · Art. 150', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => /(dota[cç][aã]o|programa\s+de\s+trabalho|natureza\s+de\s+despesa|fonte\s+de\s+recurso|previs[aã]o\s+or[cç]ament)/i.test(c.corpus),
-    mensagemFalha:'Dotação não indicada.', recomendacao:'Indicar dotação, programa e natureza de despesa.' },
-
-  { id:'B2_03', bloco:2, nome:'Adequação orçamentária', fundamento:'Art. 150', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(\bLRF\b|responsabilidade\s+fiscal|\bLDO\b|adequa[cç][aã]o\s+or[cç]ament)/i.test(c.corpus),
-    mensagemFalha:'Sem declaração de adequação.', recomendacao:'Declarar adequação orçamentária e financeira.' },
-
+  { id:'B2_01', bloco:2, nome:'Estimativa de valor', fundamento:'Art. 23', severidade:'CRITICA', aplicavel:()=>true, test:c=>c.meta.valor > 0 || firstMatch(c.corpus, KB.orcamento) || !!(c.licitareq?.valor > 0), mensagemFalha:'Estimativa de valor ausente.', recomendacao:'Elaborar planilha orçamentária.' },
+  { id:'B2_02', bloco:2, nome:'Dotação orçamentária', fundamento:'Art. 18, §1º, V · Art. 150', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(dota[cç][aã]o|programa\s+de\s+trabalho|natureza\s+de\s+despesa|fonte\s+de\s+recurso|previs[aã]o\s+or[cç]ament)/i.test(c.corpus), mensagemFalha:'Dotação não indicada.', recomendacao:'Indicar dotação, programa e natureza.' },
+  { id:'B2_03', bloco:2, nome:'Adequação orçamentária', fundamento:'Art. 150', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(\bLRF\b|responsabilidade\s+fiscal|\bLDO\b|adequa[cç][aã]o\s+or[cç]ament)/i.test(c.corpus), mensagemFalha:'Sem declaração de adequação.', recomendacao:'Declarar adequação orçamentária.' },
   { id:'B2_04', bloco:2, nome:'Limite de dispensa por valor', fundamento:'Art. 75, I e II', severidade:'CRITICA',
     aplicavel: c => ehObjetoDispensa(c),
-    motivoNA: 'Regra restrita às contratações diretas por dispensa (Art. 75).',
+    motivoNA: 'Regra restrita às dispensas (Art. 75).',
     test: c => {
       const obra = ehObjetoEngenharia(c.meta, c.natureza, c.corpus);
       const lim = obra ? LIMITE_DISPENSA_OBRAS : LIMITE_DISPENSA_BENS_SERVICOS;
       const valor = c.meta.valor || (c.licitareq?.valor ?? 0);
       if (!valor || valor <= 0) return false;
       return valor <= lim;
-    },
-    mensagemFalha:'Valor acima do teto para dispensa.', recomendacao:'Reclassificar modalidade ou revisar valor.' },
-
+    }, mensagemFalha:'Valor acima do teto para dispensa.', recomendacao:'Reclassificar modalidade.' },
   { id:'B2_05', bloco:2, nome:'Referência SINAPI/SICRO (obras)', fundamento:'Art. 23, §2º', severidade:'MEDIA',
     aplicavel: c => ehObjetoEngenharia(c.meta, c.natureza, c.corpus),
-    motivoNA: 'Regra aplicável exclusivamente a obras e serviços de engenharia.',
+    motivoNA: 'Aplicável exclusivamente a obras e engenharia.',
     test: c => /(SINAPI|SICRO|tabela\s+de\s+refer[eê]ncia|composi[cç][aã]o\s+de\s+custos)/i.test(c.corpus),
     mensagemFalha:'Sem referência SINAPI/SICRO.', recomendacao:'Comprovar compatibilidade com SINAPI/SICRO.' },
 
-  /* ============ BLOCO 3 — VEDAÇÕES ============ */
   { id:'B3_01', bloco:3, nome:'Vedação a direcionamento de marca', fundamento:'Art. 41, I', severidade:'CRITICA',
     aplicavel: c => ehObjetoBens(c) || !!c.licitareq,
-    motivoNA: 'Vedação específica para aquisição de bens (Art. 41, I).',
+    motivoNA: 'Vedação específica para aquisição de bens.',
     test: c => {
-      const corpus = c.corpus;
-      const vA = /(vedad[ao]|proibid[ao]|sem|aus[êe]ncia)\s+.{0,80}?\b(marca|modelo|fabricante)\b/i.test(corpus);
-      const vB = /(marca\s+exclusiva|indica[cç][aã]o\s+de\s+marca).{0,80}?\b(vedad[ao]|proibid[ao])/i.test(corpus);
+      const vA = /(vedad[ao]|proibid[ao]|sem|aus[êe]ncia)\s+.{0,80}?\b(marca|modelo|fabricante)\b/i.test(c.corpus);
+      const vB = /(marca\s+exclusiva|indica[cç][aã]o\s+de\s+marca).{0,80}?\b(vedad[ao]|proibid[ao])/i.test(c.corpus);
       if (vA || vB) return true;
-      const temMarca = /\b(marca|modelo|fabricante)\s*[:\-]\s*[A-ZÀ-Ú][\w-]{1,30}/i.test(corpus);
+      const temMarca = /\b(marca|modelo|fabricante)\s*[:\-]\s*[A-ZÀ-Ú][\w-]{1,30}/i.test(c.corpus);
       if (!temMarca) return true;
-      return /(padroniza|carta\s+de\s+exclusividade|justificativa\s+t[eé]cnica|not[óo]ria\s+especializa)/i.test(corpus);
-    },
-    mensagemFalha:'Indicação de marca sem justificativa.', recomendacao:'Vedar indicação de marca OU justificar padronização (Art. 41, I).' },
-
-  { id:'B3_02', bloco:3, nome:'Vedação à participação de servidores', fundamento:'Art. 14, I', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(servidores?|membros?\s+da\s+comiss[aã]o|art\.?\s*14|v[eé]dad[ao]\s+ao\s+servidor|impedimento\s+de\s+servidor)/i.test(c.corpus),
-    mensagemFalha:'Sem cláusula de vedação a servidores.', recomendacao:'Incluir cláusula vedando participação de servidores (Art. 14, I).' },
-
-  { id:'B3_03', bloco:3, nome:'Vedação a empresas sancionadas', fundamento:'Art. 14, III', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(\bceis\b|\bcnep\b|suspen[sa]|impedid[ao]|sancionad[ao]|inid[ôo]ne[ao]|art\.?\s*14)/i.test(c.corpus),
-    mensagemFalha:'Sem vedação a empresas impedidas.', recomendacao:'Explicitar vedação e consulta CEIS/CNEP (Art. 14, III).' },
-
-  { id:'B3_04', bloco:3, nome:'Declaração sobre trabalho infantil', fundamento:'Art. 68, VI', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(infantil|menor(?:es)?\s+de\s+18|trabalho\s+noturno|perigoso|art\.?\s*68|n[aã]o\s+emprego\s+de\s+menores)/i.test(c.corpus),
-    mensagemFalha:'Sem declaração sobre trabalho infantil.', recomendacao:'Exigir declaração de não emprego de menores (Art. 68, VI).' },
-
-  { id:'B3_05', bloco:3, nome:'Qualificação técnica e vistoria', fundamento:'Arts. 63 e 67', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => {
+      return /(padroniza|carta\s+de\s+exclusividade|justificativa\s+t[eé]cnica|not[óo]ria\s+especializa)/i.test(c.corpus);
+    }, mensagemFalha:'Indicação de marca sem justificativa.', recomendacao:'Vedar ou justificar padronização (Art. 41, I).' },
+  { id:'B3_02', bloco:3, nome:'Vedação à participação de servidores', fundamento:'Art. 14, I', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(servidores?|membros?\s+da\s+comiss[aã]o|art\.?\s*14|v[eé]dad[ao]\s+ao\s+servidor|impedimento\s+de\s+servidor)/i.test(c.corpus), mensagemFalha:'Sem vedação a servidores.', recomendacao:'Incluir cláusula (Art. 14, I).' },
+  { id:'B3_03', bloco:3, nome:'Vedação a empresas sancionadas', fundamento:'Art. 14, III', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(\bceis\b|\bcnep\b|suspen[sa]|impedid[ao]|sancionad[ao]|inid[ôo]ne[ao]|art\.?\s*14)/i.test(c.corpus), mensagemFalha:'Sem vedação a empresas impedidas.', recomendacao:'Explicitar vedação (Art. 14, III).' },
+  { id:'B3_04', bloco:3, nome:'Declaração sobre trabalho infantil', fundamento:'Art. 68, VI', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(infantil|menor(?:es)?\s+de\s+18|trabalho\s+noturno|perigoso|art\.?\s*68)/i.test(c.corpus), mensagemFalha:'Sem declaração.', recomendacao:'Exigir declaração (Art. 68, VI).' },
+  { id:'B3_05', bloco:3, nome:'Qualificação técnica e vistoria', fundamento:'Arts. 63 e 67', severidade:'MEDIA', aplicavel:()=>true, test:c=>{
       if (/(exig[êe]ncia\s+excessiva|desproporcional|afunilad[ao])/i.test(c.corpus)) return false;
       const v = /(vistoria|visita\s+t[eé]cnica)/i.test(c.corpus);
       if (!v) return true;
       return /(declara[cç][aã]o\s+formal|substitui[cç][aã]o|dispensa\s+de\s+vistoria|art\.?\s*63)/i.test(c.corpus);
-    },
-    mensagemFalha:'Vistoria sem alternativa.', recomendacao:'Permitir declaração em substituição à vistoria (Art. 63).' },
+    }, mensagemFalha:'Vistoria sem alternativa.', recomendacao:'Permitir declaração (Art. 63).' },
 
-  /* ============ BLOCO 4 — MODALIDADE (dinâmico) ============ */
-  { id:'B4_01', bloco:4, nome:'Coerência modalidade × natureza', fundamento:'Art. 6º, XLI · Arts. 28 a 32', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
+  { id:'B4_01', bloco:4, nome:'Coerência modalidade × natureza', fundamento:'Art. 6º, XLI · Arts. 28 a 32', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
       const nat = (c.natureza || '').toLowerCase();
       const obj = ((c.meta?.objeto?.texto || '') + ' ' + (c.meta?.objeto?.tipo || '')).toLowerCase();
@@ -483,12 +383,8 @@ const MATRIZ_CORE_30 = [
       if (mod.includes('concurso')) return /art[íi]stic|t[eé]cnic|intelectual|projeto|criativ/.test(blob);
       if (mod.includes('diálogo')) return /inova[cç][aã]o|complexid|tecnolog|especial/.test(blob);
       return true;
-    },
-    mensagemFalha:'Modalidade incompatível.', recomendacao:'Reavaliar modalidade (Arts. 28 a 32).' },
-
-  { id:'B4_02', bloco:4, nome:'Critério de julgamento compatível', fundamento:'Art. 33', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
+    }, mensagemFalha:'Modalidade incompatível.', recomendacao:'Reavaliar (Arts. 28 a 32).' },
+  { id:'B4_02', bloco:4, nome:'Critério de julgamento compatível', fundamento:'Art. 33', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const crit = (c.criterio || '').toLowerCase();
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
       const blob = [(c.natureza || ''), (c.meta?.objeto?.texto || '')].join(' ').toLowerCase();
@@ -498,128 +394,78 @@ const MATRIZ_CORE_30 = [
       if (/intelectual/.test(blob) && !/melhor-tecnica|tecnica-preco/.test(crit)) return false;
       if (/bens\s+comuns/.test(blob) && !/menor-preco|maior-desconto|maior-retorno/.test(crit)) return false;
       return true;
-    },
-    mensagemFalha:'Critério incompatível ou não declarado.', recomendacao:'Declarar critério compatível (Art. 33).' },
-
+    }, mensagemFalha:'Critério incompatível.', recomendacao:'Declarar critério compatível (Art. 33).' },
   { id:'B4_03', bloco:4, nome:'Rito específico (Concurso/Leilão/Diálogo)', fundamento:'Arts. 30 a 32', severidade:'MEDIA',
     aplicavel: c => ehObjetoConcurso(c) || ehObjetoAlienacao(c) || ehObjetoDialogo(c),
-    motivoNA: 'Regra aplicável apenas a Concurso, Leilão e Diálogo Competitivo.',
+    motivoNA: 'Aplicável a Concurso, Leilão e Diálogo.',
     test: c => {
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
       if (mod.includes('leilão'))   return /(maior\s+lance|leiloeiro|edital\s+de\s+leil[aã]o)/i.test(c.corpus);
       if (mod.includes('concurso')) return /(comiss[aã]o|julgadora|banca|concurso)/i.test(c.corpus);
       if (mod.includes('diálogo'))  return /(comiss[aã]o|di[aá]logo|fase\s+de\s+di[aá]logo)/i.test(c.corpus);
       return true;
-    },
-    mensagemFalha:'Rito específico não caracterizado.', recomendacao:'Documentar rito conforme Arts. 30 a 32.' },
-
+    }, mensagemFalha:'Rito não caracterizado.', recomendacao:'Documentar rito (Arts. 30 a 32).' },
   { id:'B4_04', bloco:4, nome:'Fundamento de contratação direta', fundamento:'Arts. 74 e 75', severidade:'CRITICA',
     aplicavel: c => ehObjetoInexigibilidade(c) || ehObjetoDispensa(c),
-    motivoNA: 'Regra restrita às hipóteses de contratação direta (Arts. 74 e 75).',
+    motivoNA: 'Restrita às contratações diretas (Arts. 74 e 75).',
     test: c => {
-      if (ehObjetoInexigibilidade(c)) {
-        return /(inviabilidade\s+de\s+competi|exclusividade|not[óo]ria\s+especializa|art\.?\s*74)/i.test(c.corpus);
-      }
+      if (ehObjetoInexigibilidade(c)) return /(inviabilidade\s+de\s+competi|exclusividade|not[óo]ria\s+especializa|art\.?\s*74)/i.test(c.corpus);
       if (ehObjetoDispensa(c)) {
         const emerg = KB.emergencia.test(c.corpus);
         if (emerg) return /(risco\s+iminente|paralisa[cç][aã]o|art\.?\s*75,?\s*viii)/i.test(c.corpus);
         return /(art\.?\s*75|dispensa)/i.test(c.corpus);
       }
       return true;
-    },
-    mensagemFalha:'Fundamento legal não caracterizado.',
-    recomendacao:'Instruir com fundamento expresso do Art. 74 ou 75.' },
-
+    }, mensagemFalha:'Fundamento não caracterizado.', recomendacao:'Instruir com fundamento (Art. 74 ou 75).' },
   { id:'B4_05', bloco:4, nome:'Notória especialização (serviços intelectuais)', fundamento:'Arts. 74, III e 6º, XVIII', severidade:'MEDIA',
     aplicavel: c => ehObjetoServicoIntelectual(c),
-    motivoNA: 'Regra aplicável a serviços técnicos de natureza predominantemente intelectual.',
+    motivoNA: 'Aplicável a serviços predominantemente intelectuais.',
     test: c => /(not[oó]ria\s+especializa|intelectual|singularidade|inconfundibilidade|confian[cç]a)/i.test(c.corpus),
-    mensagemFalha:'Notória especialização não caracterizada.',
-    recomendacao:'Comprovar notória especialização ou singularidade do objeto.' },
+    mensagemFalha:'Notória especialização não caracterizada.', recomendacao:'Comprovar notória especialização.' },
 
-  /* ============ BLOCO 5 — PRAZOS ============ */
-  { id:'B5_01', bloco:5, nome:'Prazo mínimo de publicidade', fundamento:'Art. 55', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
+  { id:'B5_01', bloco:5, nome:'Prazo mínimo de publicidade', fundamento:'Art. 55', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
       const tipo = c.meta?.tipoObjeto || '';
-      const corpus = c.corpus;
       if (mod.includes('pregão')) {
-        if (tipo === 'bens') return /(8\s*\(?[oO]ito\)?|oito\s+dias|8\s+dias\s+[uú]teis|art\.?\s*55)/i.test(corpus);
-        if (tipo === 'servicos') return /(10\s+dias|dez\s+dias)/i.test(corpus);
+        if (tipo === 'bens') return /(8\s*\(?[oO]ito\)?|oito\s+dias|8\s+dias\s+[uú]teis|art\.?\s*55)/i.test(c.corpus);
+        if (tipo === 'servicos') return /(10\s+dias|dez\s+dias)/i.test(c.corpus);
       }
-      if (mod.includes('concorrência')) return /(35\s+dias|trinta\s+e\s+cinco)/i.test(corpus);
-      if (mod.includes('leilão')) return /(15\s+dias|quinze\s+dias)/i.test(corpus);
-      if (mod.includes('concurso')) return /(45\s+dias|quarenta\s+e\s+cinco)/i.test(corpus);
-      if (mod.includes('diálogo')) return /(10\s+dias|dez\s+dias)/i.test(corpus);
-      return /(\d+\s+dias|prazo)/i.test(corpus);
-    },
-    mensagemFalha:'Prazo mínimo legal não identificado.',
-    recomendacao:'Observar prazos do Art. 55 (8/10/15/35/45 dias conforme o rito).' },
-
-  { id:'B5_02', bloco:5, nome:'Publicação no PNCP', fundamento:'Art. 54', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => /(PNCP|Portal\s+Nacional\s+de\s+Contrata)/i.test(c.corpus),
-    mensagemFalha:'Sem menção ao PNCP.', recomendacao:'Prever publicação obrigatória no PNCP (Art. 54).' },
-
-  { id:'B5_03', bloco:5, nome:'Impugnação e esclarecimentos', fundamento:'Arts. 164 e 165', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(impugna[cç][õo]es?|esclarecimento|art\.?\s*164|art\.?\s*165)/i.test(c.corpus),
-    mensagemFalha:'Sem previsão de impugnação/esclarecimentos.',
-    recomendacao:'Prever prazos de impugnação e esclarecimentos (Arts. 164 e 165).' },
-
+      if (mod.includes('concorrência')) return /(35\s+dias|trinta\s+e\s+cinco)/i.test(c.corpus);
+      if (mod.includes('leilão')) return /(15\s+dias|quinze\s+dias)/i.test(c.corpus);
+      if (mod.includes('concurso')) return /(45\s+dias|quarenta\s+e\s+cinco)/i.test(c.corpus);
+      if (mod.includes('diálogo')) return /(10\s+dias|dez\s+dias)/i.test(c.corpus);
+      return /(\d+\s+dias|prazo)/i.test(c.corpus);
+    }, mensagemFalha:'Prazo não identificado.', recomendacao:'Observar prazos do Art. 55.' },
+  { id:'B5_02', bloco:5, nome:'Publicação no PNCP', fundamento:'Art. 54', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(PNCP|Portal\s+Nacional\s+de\s+Contrata)/i.test(c.corpus), mensagemFalha:'Sem menção ao PNCP.', recomendacao:'Prever publicação (Art. 54).' },
+  { id:'B5_03', bloco:5, nome:'Impugnação e esclarecimentos', fundamento:'Arts. 164 e 165', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(impugna[cç][õo]es?|esclarecimento|art\.?\s*164|art\.?\s*165)/i.test(c.corpus), mensagemFalha:'Sem previsão de impugnação.', recomendacao:'Prever prazos (Arts. 164 e 165).' },
   { id:'B5_04', bloco:5, nome:'Modo de disputa e fase recursal', fundamento:'Arts. 56, 165 e 166', severidade:'MEDIA',
     aplicavel: c => /preg[aã]o|concorr[eê]ncia|di[aá]logo/i.test(c.modalidade?.modalidade || ''),
-    motivoNA: 'Regra aplicável a Pregão, Concorrência e Diálogo Competitivo.',
+    motivoNA: 'Aplicável a Pregão, Concorrência e Diálogo.',
     test: c => /(aberto|fechado|aberto\s+e\s+fechado|fase\s+[uú]nica|recurso)/i.test(c.corpus),
-    mensagemFalha:'Modo de disputa/fase recursal não declarado.',
-    recomendacao:'Declarar modo de disputa e fase recursal (Arts. 56, 165 e 166).' },
-
+    mensagemFalha:'Modo de disputa não declarado.', recomendacao:'Declarar modo de disputa (Arts. 56, 165 e 166).' },
   { id:'B5_05', bloco:5, nome:'Regime de execução (obras)', fundamento:'Art. 46', severidade:'MEDIA',
     aplicavel: c => ehObjetoEngenharia(c.meta, c.natureza, c.corpus),
-    motivoNA: 'Regra aplicável exclusivamente a obras e serviços de engenharia (Art. 46).',
+    motivoNA: 'Aplicável exclusivamente a obras e engenharia (Art. 46).',
     test: c => /(empreitada|tarefa|regime\s+de\s+execu[cç][aã]o|pre[cç]o\s+unit[aá]rio|pre[cç]o\s+global|integral)/i.test(c.corpus),
-    mensagemFalha:'Regime de execução não declarado.',
-    recomendacao:'Declarar regime de execução (Art. 46).' },
+    mensagemFalha:'Regime não declarado.', recomendacao:'Declarar regime (Art. 46).' },
 
-  /* ============ BLOCO 6 — FISCALIZAÇÃO ============ */
-  { id:'B6_01', bloco:6, nome:'Fiscal e gestor designados', fundamento:'Art. 117', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
+  { id:'B6_01', bloco:6, nome:'Fiscal e gestor designados', fundamento:'Art. 117', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const t = /(fiscal\s+titular|fiscaliza[cç][aã]o)/i.test(c.corpus);
       const s = /(fiscal\s+substituto|fiscal\s+suplente|substituto)/i.test(c.corpus);
       const g = /(gestor|gest[aã]o\s+contratual)/i.test(c.corpus);
       return t && (s || g);
-    },
-    mensagemFalha:'Fiscal/gestor não designados.', recomendacao:'Designar fiscal titular, substituto e gestor (Art. 117).' },
-
-  { id:'B6_02', bloco:6, nome:'Segregação de funções', fundamento:'Art. 7º, §1º', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => /(segrega[cç][aã]o\s+de\s+fun[cç][õo]es|agente\s+de\s+contrata|pregoeiro|equipe\s+de\s+apoio)/i.test(c.corpus),
-    mensagemFalha:'Segregação não observada.', recomendacao:'Designar separadamente agente, pregoeiro e equipe (Art. 7º, §1º).' },
-
-  { id:'B6_03', bloco:6, nome:'Recebimento provisório e definitivo', fundamento:'Art. 140', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(recebimento|aceite)\s+(provis[óo]ri|definitiv)/i.test(c.corpus) || /art\.?\s*140/i.test(c.corpus),
-    mensagemFalha:'Sem critérios de recebimento.', recomendacao:'Definir recebimento provisório e definitivo (Art. 140).' },
-
-  { id:'B6_04', bloco:6, nome:'Pagamento em até 30 dias', fundamento:'Art. 141', severidade:'BAIXA',
-    aplicavel: () => true,
-    test: c => /(30\s+dias|trinta\s+dias).{0,40}(pagamento|nota\s+fiscal|aceite)/i.test(c.corpus) || !/pagamento/i.test(c.corpus),
-    mensagemFalha:'Prazo de pagamento não fixado.', recomendacao:'Fixar pagamento em até 30 dias após NF e aceite (Art. 141).' },
-
-  { id:'B6_05', bloco:6, nome:'Sanções administrativas', fundamento:'Art. 155', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(san[cç][õo]es\s+administrativas|multa|advert[êe]ncia|impedimento\s+de\s+contratar)/i.test(c.corpus),
-    mensagemFalha:'Sanções não previstas.', recomendacao:'Prever sanções graduadas do Art. 155.' },
+    }, mensagemFalha:'Fiscal/gestor não designados.', recomendacao:'Designar fiscal e gestor (Art. 117).' },
+  { id:'B6_02', bloco:6, nome:'Segregação de funções', fundamento:'Art. 7º, §1º', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(segrega[cç][aã]o\s+de\s+fun[cç][õo]es|agente\s+de\s+contrata|pregoeiro|equipe\s+de\s+apoio)/i.test(c.corpus), mensagemFalha:'Segregação não observada.', recomendacao:'Designar separadamente (Art. 7º, §1º).' },
+  { id:'B6_03', bloco:6, nome:'Recebimento provisório e definitivo', fundamento:'Art. 140', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(recebimento|aceite)\s+(provis[óo]ri|definitiv)/i.test(c.corpus) || /art\.?\s*140/i.test(c.corpus), mensagemFalha:'Sem critérios de recebimento.', recomendacao:'Definir recebimento (Art. 140).' },
+  { id:'B6_04', bloco:6, nome:'Pagamento em até 30 dias', fundamento:'Art. 141', severidade:'BAIXA', aplicavel:()=>true, test:c=>/(30\s+dias|trinta\s+dias).{0,40}(pagamento|nota\s+fiscal|aceite)/i.test(c.corpus) || !/pagamento/i.test(c.corpus), mensagemFalha:'Prazo não fixado.', recomendacao:'Fixar em até 30 dias (Art. 141).' },
+  { id:'B6_05', bloco:6, nome:'Sanções administrativas', fundamento:'Art. 155', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(san[cç][õo]es\s+administrativas|multa|advert[êe]ncia|impedimento\s+de\s+contratar)/i.test(c.corpus), mensagemFalha:'Sanções não previstas.', recomendacao:'Prever sanções (Art. 155).' },
 ];
 
 /* ==========================================================================
- * 7. MOTOR DE AVALIAÇÃO (HÍBRIDO)
+ * 7. MOTOR DE AVALIAÇÃO
  * ======================================================================== */
 function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio, licitareq = null, arquivoRef = null) {
   const ctx = { corpus, meta, natureza, modalidade, criterio, licitareq, arquivo: arquivoRef };
-
   const resultados = MATRIZ_CORE_30.map((regra) => {
     let aplicavel = false;
     try { aplicavel = !!regra.aplicavel(ctx); } catch (_) { aplicavel = true; }
@@ -635,26 +481,22 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio, 
   const pesoTotal  = aplicaveis.reduce((s, r) => s + r.peso, 0);
   const pesoFalha  = aplicaveis.filter(r => !r.conforme).reduce((s, r) => s + r.peso, 0);
   const score = pesoTotal > 0 ? Math.max(0, Math.round((100 - (pesoFalha / pesoTotal) * 100) * 10) / 10) : 100;
-
   const criticas = aplicaveis.filter(r => !r.conforme && r.severidade === 'CRITICA').length;
   const medias   = aplicaveis.filter(r => !r.conforme && r.severidade === 'MEDIA').length;
   const baixas   = aplicaveis.filter(r => !r.conforme && r.severidade === 'BAIXA').length;
   const risco = calcularRiscoArquivo(score, criticas);
-
   const porBloco = {};
   for (let b = 1; b <= 6; b++) {
     const lista = aplicaveis.filter(r => r.bloco === b);
     const listaTodos = resultados.filter(r => r.bloco === b);
     porBloco[b] = {
-      titulo: BLOCO_TITULO[b],
-      total: lista.length,
+      titulo: BLOCO_TITULO[b], total: lista.length,
       ok: lista.filter(r => r.conforme).length,
       falha: lista.filter(r => !r.conforme).length,
       criticas: lista.filter(r => !r.conforme && r.severidade === 'CRITICA').length,
       na: listaTodos.length - lista.length,
     };
   }
-
   return {
     resultados, aplicaveis,
     totalAplicaveis: aplicaveis.length,
@@ -664,7 +506,6 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio, 
     porBloco, risco,
   };
 }
-
 function calcularRiscoArquivo(score, criticas) {
   if (criticas > 0) return 'ALTO';
   if (score < 70)   return 'ALTO';
@@ -710,12 +551,11 @@ function nivelConformidade(pct) {
 }
 
 /* ==========================================================================
- * 8. ANÁLISE INDIVIDUAL — HÍBRIDA (arquivo + metadados do processo)
+ * 8. ANÁLISE INDIVIDUAL HÍBRIDA
  * ======================================================================== */
 function analisarTextoIndividual(corpus, opts = {}) {
   const nomeArquivo = opts.nomeArquivo || '';
   const licitareq = ehArquivoLicitaReq(nomeArquivo, corpus) ? parseLicitaReq(corpus) : null;
-
   const metaBase = {
     modalidade: extrairModalidade(corpus),
     objeto:     extrairObjeto(corpus),
@@ -724,8 +564,6 @@ function analisarTextoIndividual(corpus, opts = {}) {
     orgao:      extrairOrgao(corpus),
     empresa:    corpus.match(KB.empresa)?.[0]?.trim() || licitareq?.empresa || null,
   };
-
-  /* Enriquecimento por LicitaReq */
   if (licitareq) {
     if (!metaBase.processo || metaBase.processo === 'Não identificado') metaBase.processo = licitareq.processo || 'Não identificado';
     if (!metaBase.valor && licitareq.valor) metaBase.valor = licitareq.valor;
@@ -734,28 +572,17 @@ function analisarTextoIndividual(corpus, opts = {}) {
       metaBase.objeto.tipo = classificarObjeto(licitareq.objeto);
     }
   }
-
-  /* Cruzamento: parâmetros declarados no processo têm precedência */
   const naturezaBase = classificarNatureza(corpus, opts.paramObjeto || 'auto');
   const modalidadeLabel = (opts.paramModalidade && opts.paramModalidade !== 'auto')
-    ? labelModalidade(opts.paramModalidade)
-    : metaBase.modalidade.rotulo;
+    ? labelModalidade(opts.paramModalidade) : metaBase.modalidade.rotulo;
   const criterio = (opts.paramCriterio && opts.paramCriterio !== 'auto')
-    ? opts.paramCriterio
-    : extrairCriterio(corpus);
-
+    ? opts.paramCriterio : extrairCriterio(corpus);
   const tipoObjeto = classificarTipoObjeto({ objeto: metaBase.objeto, natureza: naturezaBase });
   const meta = { ...metaBase, natureza: naturezaBase, modalidade: modalidadeLabel, criterio, tipoObjeto };
-
-  const auditoria = executarAuditoriaArquivo(
-    corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio,
-    licitareq, { licitareq: !!licitareq, nome: nomeArquivo }
-  );
-
+  const auditoria = executarAuditoriaArquivo(corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio, licitareq, { licitareq: !!licitareq, nome: nomeArquivo });
   const objetoExibicao = (meta.objeto.texto && meta.objeto.texto.trim().length >= 5
     ? meta.objeto.texto.trim().slice(0, 200)
     : meta.objeto.tipo || 'Não identificado');
-
   return {
     score: auditoria.score, risco: auditoria.risco,
     licitareq,
@@ -835,11 +662,7 @@ function criarProcesso(nome) {
     cor: CORES_PRESET[state.processos.length % CORES_PRESET.length],
     tags: [], arquivos: [],
     notas: '',
-    metadados: {
-      modalidade: 'auto',
-      natureza: 'auto',
-      criterio: 'auto',
-    },
+    metadados: { modalidade: 'auto', natureza: 'auto', criterio: 'auto' },
     criadoEm: new Date().toISOString(),
   };
   state.processos.push(proc);
@@ -856,29 +679,26 @@ function excluirProcesso(procId) {
 }
 function getProcessoAtivo() { return state.processos.find(p => p.id === state.ativo) || null; }
 
-/* ---------- Perfil do processo (com overrides) ---------- */
+/* ---------- Separação LicitaReq × Documentos comuns ---------- */
+function separarArquivosProcesso(processo) {
+  const licitareq = processo.arquivos.filter(a => a.licitareq);
+  const comuns    = processo.arquivos.filter(a => !a.licitareq);
+  return { licitareq, comuns };
+}
+
+/* ---------- Perfil ---------- */
 function getPerfilProcesso(processo) {
   const arquivosOk = processo.arquivos.filter(a => a.status === 'ok' && a.identificacao);
   const primeiro = arquivosOk[0];
-
   const overrideMod = processo.metadados?.modalidade;
   const overrideNat = processo.metadados?.natureza;
   const overrideCri = processo.metadados?.criterio;
-
   const globalMod = els.paramModalidade?.value;
   const globalNat = els.paramObjeto?.value;
   const globalCri = els.paramCriterio?.value;
-
-  const modFinal = (overrideMod && overrideMod !== 'auto') ? overrideMod
-    : (globalMod && globalMod !== 'auto') ? globalMod
-    : null;
-  const natFinal = (overrideNat && overrideNat !== 'auto') ? overrideNat
-    : (globalNat && globalNat !== 'auto') ? globalNat
-    : null;
-  const criFinal = (overrideCri && overrideCri !== 'auto') ? overrideCri
-    : (globalCri && globalCri !== 'auto') ? globalCri
-    : null;
-
+  const modFinal = (overrideMod && overrideMod !== 'auto') ? overrideMod : (globalMod && globalMod !== 'auto') ? globalMod : null;
+  const natFinal = (overrideNat && overrideNat !== 'auto') ? overrideNat : (globalNat && globalNat !== 'auto') ? globalNat : null;
+  const criFinal = (overrideCri && overrideCri !== 'auto') ? overrideCri : (globalCri && globalCri !== 'auto') ? globalCri : null;
   return {
     modalidade: modFinal ? labelModalidade(modFinal) : (primeiro?.identificacao?.modalidade || 'Não identificada'),
     natureza:   natFinal ? labelNatureza(natFinal)   : (primeiro?.identificacao?.natureza   || 'Não identificada'),
@@ -892,9 +712,7 @@ function getPerfilProcesso(processo) {
       criterio: overrideCri || 'auto',
     },
     _auto: {
-      modalidade: !modFinal,
-      natureza: !natFinal,
-      criterio: !criFinal,
+      modalidade: !modFinal, natureza: !natFinal, criterio: !criFinal,
     },
   };
 }
@@ -907,30 +725,21 @@ async function adicionarArquivos(procId, fileList) {
   if (!p) return;
   const files = Array.from(fileList).filter(Boolean);
   if (!files.length) return;
-
   showLoader('Extraindo e analisando…');
-  const perfis = getPerfilProcesso(p);
   const paramObjeto     = p.metadados?.natureza  !== 'auto' ? p.metadados.natureza  : els.paramObjeto.value;
   const paramModalidade = p.metadados?.modalidade !== 'auto' ? p.metadados.modalidade : els.paramModalidade.value;
   const paramCriterio   = p.metadados?.criterio   !== 'auto' ? p.metadados.criterio   : els.paramCriterio.value;
-
   for (const file of files) {
-    const isLR = ehArquivoLicitaReq(file.name, '');
     const entry = {
       id: uid('arq'), nomeArquivo: file.name, ext: extOf(file.name),
-      tamanho: file.size, texto: '', status: 'loading', erro: null,
-      licitareq: false, _ref: file,
+      tamanho: file.size, texto: '', status: 'loading', erro: null, licitareq: false, _ref: file,
     };
     p.arquivos.push(entry);
     renderWorkspace();
-
     try {
       entry.texto = await extractFileText(entry._ref);
       entry.status = 'ok';
-      const res = analisarTextoIndividual(entry.texto, {
-        paramObjeto, paramModalidade, paramCriterio,
-        nomeArquivo: file.name,
-      });
+      const res = analisarTextoIndividual(entry.texto, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: file.name });
       Object.assign(entry, res);
       entry.licitareq = !!res.licitareq;
     } catch (err) {
@@ -1052,26 +861,82 @@ function renderAchadosConsolidados(arquivos) {
     </div>`;
 }
 
-/* ---------- Info do LicitaReq ---------- */
-function renderLicitaReqInfo(processo) {
-  const arquivosLR = processo.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
-  if (!arquivosLR.length) return '';
-  const ref = arquivosLR[0].licitareq;
+/* ---------- NOVO: Render da SEÇÃO LICITAREQ dedicada ---------- */
+function renderSecaoLicitaReq(processo, arquivosLR) {
+  if (!arquivosLR.length) {
+    return `
+      <section class="ws-licitareq">
+        <header class="ws-licitareq__head">
+          <span class="ws-licitareq__title">Requerimentos / DFD / LicitaReq</span>
+          <span class="ws-licitareq__count">0</span>
+        </header>
+        <p class="ws-licitareq__empty">
+          Nenhum requerimento ou DFD anexado — arraste abaixo um <strong>Requerimento LicitaReq</strong>,
+          <strong>DFD</strong> ou <strong>Despacho de Triagem</strong> para auditar a formalização da demanda.
+        </p>
+        <div class="ws-licitareq__actions">
+          <button class="btn btn--licitareq" data-drop-req="${processo.id}" type="button">
+            ⬆ Anexar Requerimento / DFD
+          </button>
+        </div>
+      </section>`;
+  }
+
+  const itens = arquivosLR.map(a => {
+    const score = a.status === 'ok' && typeof a.score === 'number'
+      ? `${a.score.toFixed(1)}%` : (a.status === 'erro' ? 'Erro' : '…');
+    const risco = a.risco || '—';
+    const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
+    const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+    const ref = a.licitareq || {};
+    const detalhes = [];
+    if (ref.processo) detalhes.push(`<span>📄 <b>${escapeHtml(ref.processo)}</b></span>`);
+    if (ref.unidade)  detalhes.push(`<span>🏢 ${escapeHtml(ref.unidade)}</span>`);
+    if (ref.valor > 0) detalhes.push(`<span>💰 <b>${escapeHtml(ref.valor.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}))}</b></span>`);
+    if (ref.empresa)  detalhes.push(`<span style="color:var(--danger);">⚠ ${escapeHtml(ref.empresa)}</span>`);
+    if (ref.emergencia) detalhes.push(`<span>🚨 <b>Emergência</b></span>`);
+    if (ref.inexigibilidade) detalhes.push(`<span>⚖️ <b>Inexigibilidade</b></span>`);
+
+    return `
+      <div class="req-item" data-req-id="${a.id}">
+        <span class="req-item__ext">${escapeHtml(a.ext || 'REQ')}</span>
+        <div class="req-item__meta">
+          <div class="req-item__name" title="${escapeHtml(a.nomeArquivo)}">
+            ${escapeHtml(truncate(a.nomeArquivo, 70))}
+          </div>
+          <div class="req-item__details">
+            <span class="req-item__score" style="color:${corScore};">${emoji} ${score}</span>
+            <span>${formatBytes(a.tamanho || 0)}</span>
+            ${detalhes.join('')}
+          </div>
+        </div>
+        <div class="req-item__actions">
+          <button class="btn-view-content" data-view-text="${a.id}" data-proc="${processo.id}" type="button" title="Ler o conteúdo textual deste requerimento">
+            📖 Ver Conteúdo
+          </button>
+          <button class="btn-icon" data-view-arq="${a.id}" data-proc="${processo.id}" title="Detalhes da análise" ${a.status !== 'ok' ? 'disabled' : ''}>👁️</button>
+          <button class="btn-icon" data-pdf-arq="${a.id}" data-proc="${processo.id}" title="PDF individual" ${a.status !== 'ok' ? 'disabled' : ''}>📄</button>
+          <button class="btn-icon danger" data-del-arq="${a.id}" data-proc="${processo.id}" title="Remover">🗑</button>
+        </div>
+      </div>`;
+  }).join('');
+
   return `
-    <div class="licitareq-info" role="note">
-      <strong>⬢ Integração LicitaReq ativa</strong> — ${arquivosLR.length} arquivo(s) reconhecido(s).
-      ${ref.processo ? `Processo detectado: <b>${escapeHtml(ref.processo)}</b>.` : ''}
-      ${ref.valor > 0 ? `Valor: <b>${ref.valor.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</b>.` : ''}
-      ${ref.empresa ? `<span style="color:var(--danger);">Empresa mencionada: <b>${escapeHtml(ref.empresa)}</b>.</span>` : ''}
-      <div class="licitareq-info__fields">
-        ${ref.emergencia ? '<span>🚨 <b>Emergência</b> detectada</span>' : ''}
-        ${ref.inexigibilidade ? '<span>⚖️ <b>Inexigibilidade</b> detectada</span>' : ''}
+    <section class="ws-licitareq">
+      <header class="ws-licitareq__head">
+        <span class="ws-licitareq__title">Requerimentos / DFD / LicitaReq</span>
+        <span class="ws-licitareq__count">${arquivosLR.length}</span>
+      </header>
+      <div class="ws-licitareq__list">${itens}</div>
+      <div class="ws-licitareq__actions">
+        <button class="btn btn--licitareq btn--sm" data-drop-req="${processo.id}" type="button">
+          ⬆ Anexar outro Requerimento / DFD
+        </button>
       </div>
-    </div>
-  `;
+    </section>`;
 }
 
-/* ---------- Render do workspace ---------- */
+/* ---------- Render principal do workspace ---------- */
 function renderWorkspace() {
   const p = getProcessoAtivo();
   if (!p) return;
@@ -1080,6 +945,7 @@ function renderWorkspace() {
   const riscoConsolidado = calcularRiscoProcesso(p.arquivos);
   const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
   const perfil = getPerfilProcesso(p);
+  const { licitareq: arquivosLR, comuns: arquivosComuns } = separarArquivosProcesso(p);
 
   const corRisco = riscoConsolidado === 'ALTO' ? 'var(--danger)'
                  : riscoConsolidado === 'MÉDIO' ? 'var(--warn)'
@@ -1093,7 +959,7 @@ function renderWorkspace() {
   const totalAplicaveis = arquivosOk.reduce((s, a) => s + (a.estatisticas?.aplicaveis || 0), 0);
   const totalInconf = arquivosOk.reduce((s, a) => s + (a.estatisticas?.falha || 0), 0);
   const totalNA = arquivosOk.reduce((s, a) => s + (a.estatisticas?.ignoradas || 0), 0);
-  const temLicitaReq = p.arquivos.some(a => a.licitareq);
+  const temLicitaReq = arquivosLR.length > 0;
 
   const dashArray = 2 * Math.PI * 44;
   const dashValue = (scoreConsolidado / 100) * dashArray;
@@ -1122,7 +988,7 @@ function renderWorkspace() {
         </div>
       </header>
 
-      <!-- Perfil editável por processo -->
+      <!-- Perfil da Licitação -->
       <section class="ws-perfil" aria-label="Perfil da Licitação">
         <div class="ws-perfil__item" data-tipo="modalidade">
           <label class="ws-perfil__label">
@@ -1164,7 +1030,7 @@ function renderWorkspace() {
             <option value="auto" ${perfil._override.criterio === 'auto' ? 'selected' : ''}>Auto (${escapeHtml(labelCriterio(perfil.criterio))})</option>
             <option value="menor-preco" ${perfil._override.criterio === 'menor-preco' ? 'selected' : ''}>Menor preço</option>
             <option value="maior-desconto" ${perfil._override.criterio === 'maior-desconto' ? 'selected' : ''}>Maior desconto</option>
-            <option value="melhor-tecnica" ${perfil._override.criterio === 'melhor-tecnica' ? 'selected' : ''}>Melhor técnica ou conteúdo artístico</option>
+            <option value="melhor-tecnica" ${perfil._override.criterio === 'melhor-tecnica' ? 'selected' : ''}>Melhor técnica</option>
             <option value="tecnica-preco" ${perfil._override.criterio === 'tecnica-preco' ? 'selected' : ''}>Técnica e preço</option>
             <option value="maior-lance" ${perfil._override.criterio === 'maior-lance' ? 'selected' : ''}>Maior lance</option>
             <option value="maior-retorno" ${perfil._override.criterio === 'maior-retorno' ? 'selected' : ''}>Maior retorno econômico</option>
@@ -1172,17 +1038,18 @@ function renderWorkspace() {
         </div>
       </section>
 
-      <!-- Documentos -->
+      <!-- ★ SEÇÃO LICITAREQ DEDICADA -->
+      ${renderSecaoLicitaReq(p, arquivosLR)}
+
+      <!-- Documentos comuns -->
       <section class="ws-secao">
         <header class="ws-secao__head">
           <span class="ws-secao__title">Documentos do Processo</span>
-          <span class="ws-secao__count">${totalArquivos}</span>
+          <span class="ws-secao__count">${arquivosComuns.length}</span>
         </header>
 
-        ${renderLicitaReqInfo(p)}
-
-        ${totalArquivos === 0
-          ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;text-align:center;">Nenhum arquivo adicionado ainda — use a área abaixo para enviar documentos.</p>`
+        ${arquivosComuns.length === 0
+          ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;text-align:center;">Nenhum documento comum adicionado — use a área abaixo para enviar arquivos.</p>`
           : `<div class="tabela-responsive-wrapper"><table class="tabela-arquivos">
               <thead><tr>
                 <th class="col-arquivo">Arquivo</th>
@@ -1190,7 +1057,7 @@ function renderWorkspace() {
                 <th class="col-risco">Risco</th>
                 <th class="col-acoes">Ações</th>
               </tr></thead>
-              <tbody>${p.arquivos.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
+              <tbody>${arquivosComuns.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
             </table></div>`}
 
         <div class="ws-dropzone" data-drop="${p.id}" tabindex="0" role="button">
@@ -1200,7 +1067,7 @@ function renderWorkspace() {
           </svg>
           <p>Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
           <p style="font-size:11.5px;color:var(--text-dim);">PDF · DOCX · DOC · TXT</p>
-          <p class="ws-dropzone__licitareq">⬢ Suporta arquivos do LicitaReq (Requerimento, DFD, Despacho)</p>
+          <p class="ws-dropzone__licitareq">⬢ Arquivos LicitaReq são direcionados à seção dedicada acima</p>
         </div>
 
         <div class="ws-actions">
@@ -1209,7 +1076,7 @@ function renderWorkspace() {
         </div>
       </section>
 
-      <!-- Notas do auditor -->
+      <!-- Notas -->
       <section class="ws-notas">
         <header class="ws-notas__head">
           <span class="ws-notas__title">
@@ -1239,6 +1106,7 @@ function renderWorkspace() {
             <span><strong>${totalAplicaveis}</strong> aplicáveis</span>
             <span><strong>${totalInconf}</strong> achados</span>
             <span><strong>${totalNA}</strong> N/A</span>
+            ${temLicitaReq ? `<span style="color:var(--licitareq);"><strong>⬢ ${arquivosLR.length}</strong> LicitaReq</span>` : ''}
           </div>
         </div>
         <div><span class="badge ${badgeCls}">${emoji} ${riscoConsolidado}</span></div>
@@ -1277,18 +1145,13 @@ function renderLinhaArquivo(procId, arq) {
   const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
   const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
   const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
-  const isLR = arq.licitareq;
-
   return `
     <tr>
       <td data-label="Arquivo">
         <div class="arquivo-nome">
-          <span class="arquivo-ext ${isLR ? 'arquivo-ext--licitareq' : ''}">${escapeHtml(arq.ext || 'ARQ')}</span>
+          <span class="arquivo-ext">${escapeHtml(arq.ext || 'ARQ')}</span>
           <span class="arquivo-nome__txt">
-            <strong title="${escapeHtml(arq.nomeArquivo)}">
-              ${escapeHtml(truncate(arq.nomeArquivo, 40))}
-              ${isLR ? `<span class="arquivo-badge-licitareq">⬢ LicitaReq</span>` : ''}
-            </strong>
+            <strong title="${escapeHtml(arq.nomeArquivo)}">${escapeHtml(truncate(arq.nomeArquivo, 40))}</strong>
             <small>${formatBytes(arq.tamanho || 0)}${arq.status === 'erro' ? ' · ' + escapeHtml(arq.erro || 'Erro') : ''}</small>
           </span>
         </div>
@@ -1297,7 +1160,8 @@ function renderLinhaArquivo(procId, arq) {
       <td class="col-risco" data-label="Risco"><span class="badge ${badgeCls}">${emoji} ${risco}</span></td>
       <td data-label="Ações">
         <div class="arquivo-acoes">
-          <button class="btn-icon" data-view-arq="${arq.id}" data-proc="${procId}" title="Ver detalhes" ${arq.status !== 'ok' ? 'disabled' : ''}>👁️</button>
+          <button class="btn-view-text" data-view-text="${arq.id}" data-proc="${procId}" title="Ver conteúdo do arquivo" ${arq.status === 'erro' ? 'disabled' : ''}>📖</button>
+          <button class="btn-icon" data-view-arq="${arq.id}" data-proc="${procId}" title="Detalhes da análise" ${arq.status !== 'ok' ? 'disabled' : ''}>👁️</button>
           <button class="btn-icon" data-pdf-arq="${arq.id}" data-proc="${procId}" title="PDF individual" ${arq.status !== 'ok' ? 'disabled' : ''}>📄</button>
           <button class="btn-icon danger" data-del-arq="${arq.id}" data-proc="${procId}" title="Excluir">🗑</button>
         </div>
@@ -1347,7 +1211,6 @@ function bindEventosWorkspace() {
     });
   }
 
-  /* Seletor de perfil editável */
   $$('[data-perfil]').forEach(sel => {
     sel.addEventListener('change', () => {
       const p = state.processos.find(x => x.id === sel.dataset.proc);
@@ -1360,7 +1223,6 @@ function bindEventosWorkspace() {
     });
   });
 
-  /* Notas do auditor */
   const notasTA = els.workspace.querySelector('[data-notas]');
   if (notasTA) {
     const procId = notasTA.dataset.notas;
@@ -1380,6 +1242,11 @@ function bindEventosWorkspace() {
   els.workspace.querySelector('[data-delete-proc]')?.addEventListener('click', e => excluirProcesso(e.currentTarget.dataset.deleteProc));
   els.workspace.querySelector('[data-criterios-proc]')?.addEventListener('click', e => abrirModalCriterios(e.currentTarget.dataset.criteriosProc));
 
+  /* Botão "Anexar Requerimento / DFD" da seção LicitaReq */
+  els.workspace.querySelectorAll('[data-drop-req]').forEach(btn => {
+    btn.addEventListener('click', () => abrirInput(btn.dataset.dropReq, { licitareq: true }));
+  });
+
   els.workspace.querySelector('[data-add-tag]')?.addEventListener('click', e => {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.addTag);
     if (!p) return;
@@ -1395,6 +1262,9 @@ function bindEventosWorkspace() {
   }));
   $$('[data-del-arq]').forEach(btn => btn.addEventListener('click', () => removerArquivo(btn.dataset.proc, btn.dataset.delArq)));
   $$('[data-view-arq]').forEach(btn => btn.addEventListener('click', () => abrirModalArquivo(btn.dataset.proc, btn.dataset.viewArq)));
+  $$('[data-view-text]').forEach(btn => btn.addEventListener('click', () =>
+    abrirModalVisualizador(btn.dataset.proc, btn.dataset.viewText)
+  ));
   $$('[data-pdf-arq]').forEach(btn => btn.addEventListener('click', () => {
     const p = state.processos.find(x => x.id === btn.dataset.proc);
     const a = p?.arquivos.find(x => x.id === btn.dataset.pdfArq);
@@ -1426,25 +1296,19 @@ function bindEventosWorkspace() {
   }
 }
 
-/* ---------- Reanálise híbrida de um processo ---------- */
 function reanalisarProcesso(processo) {
-  const perfis = getPerfilProcesso(processo);
   const paramObjeto     = (processo.metadados?.natureza  !== 'auto') ? processo.metadados.natureza  : els.paramObjeto.value;
   const paramModalidade = (processo.metadados?.modalidade !== 'auto') ? processo.metadados.modalidade : els.paramModalidade.value;
   const paramCriterio   = (processo.metadados?.criterio   !== 'auto') ? processo.metadados.criterio   : els.paramCriterio.value;
-
   processo.arquivos.forEach(a => {
     if (a.status === 'ok' && a.texto) {
-      const res = analisarTextoIndividual(a.texto, {
-        paramObjeto, paramModalidade, paramCriterio,
-        nomeArquivo: a.nomeArquivo,
-      });
+      const res = analisarTextoIndividual(a.texto, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: a.nomeArquivo });
       Object.assign(a, res);
     }
   });
 }
 
-function abrirInput(procId) {
+function abrirInput(procId, opts = {}) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true;
   inp.accept = '.pdf,.doc,.docx,.txt,.md,application/pdf,text/plain';
@@ -1489,7 +1353,7 @@ function abrirModalArquivo(procId, arqId) {
       </div>
       <div class="achado__title" style="color:var(--text-muted);">${escapeHtml(r.nome)}</div>
       <div class="achado__law">${escapeHtml(r.fundamento)}</div>
-      <div class="achado__body" style="font-style:italic;">${escapeHtml(r.motivoNA || 'Regra não aplicável à combinação declarada.')}</div>
+      <div class="achado__body" style="font-style:italic;">${escapeHtml(r.motivoNA || 'Regra não aplicável.')}</div>
     </div>`).join('');
 
   const licitareqBloco = a.licitareq ? `
@@ -1515,7 +1379,10 @@ function abrirModalArquivo(procId, arqId) {
         <p>${st.ok || 0} conformes · ${st.falha || 0} inconformidades (${st.criticas || 0} críticas · ${st.medias || 0} médias · ${st.baixas || 0} baixas)</p>
         <p>${st.aplicaveis || 0} aplicáveis · ${st.ignoradas || 0} N/A de ${st.total || 0} totais</p>
       </div>
-      <div style="margin-left:auto;"><button class="btn btn--primary btn--sm" id="btnPdfModal" type="button">📄 Baixar PDF Individual</button></div>
+      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn--licitareq btn--sm" id="btnVerTextoModal" type="button">📖 Ver Texto do Arquivo</button>
+        <button class="btn btn--primary btn--sm" id="btnPdfModal" type="button">📄 PDF Individual</button>
+      </div>
     </div>
     <div class="detalhe-meta">
       <div class="detalhe-meta__item"><span class="detalhe-meta__key">Modalidade</span><span class="detalhe-meta__val">${escapeHtml(id.modalidade || '—')}</span></div>
@@ -1534,6 +1401,10 @@ function abrirModalArquivo(procId, arqId) {
     </div>`;
   els.modal.classList.remove('is-hidden');
   $('#btnPdfModal')?.addEventListener('click', () => exportarRelatorioAuditPDF(a, p));
+  $('#btnVerTextoModal')?.addEventListener('click', () => {
+    fecharModal();
+    setTimeout(() => abrirModalVisualizador(procId, arqId), 120);
+  });
 }
 function fecharModal() { els.modal.classList.add('is-hidden'); els.modalBody.innerHTML = ''; }
 
@@ -1543,29 +1414,19 @@ function fecharModal() { els.modal.classList.add('is-hidden'); els.modalBody.inn
 function abrirModalCriterios(procId) {
   const p = state.processos.find(x => x.id === procId);
   if (!p) return;
-
-  /* Reconstrói contexto agregando todos os arquivos do processo */
   const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
   const corpus = arquivosOk.map(a => a.texto || '').join('\n\n');
   const perfis = getPerfilProcesso(p);
-
-  /* Determina contexto representativo */
   const paramObjeto     = (p.metadados?.natureza  !== 'auto') ? p.metadados.natureza  : els.paramObjeto.value;
   const paramModalidade = (p.metadados?.modalidade !== 'auto') ? p.metadados.modalidade : els.paramModalidade.value;
   const paramCriterio   = (p.metadados?.criterio   !== 'auto') ? p.metadados.criterio   : els.paramCriterio.value;
-
-  /* Roda auditoria com o corpus consolidado para ter visão geral */
-  const res = analisarTextoIndividual(corpus || ' ', {
-    paramObjeto, paramModalidade, paramCriterio,
-    nomeArquivo: '',
-  });
+  const res = analisarTextoIndividual(corpus || ' ', { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: '' });
 
   const totalAplic = res.resultados.filter(r => r.aplicavel).length;
   const totalNA    = res.resultados.filter(r => !r.aplicavel).length;
   const totalOK    = res.resultados.filter(r => r.aplicavel && r.conforme).length;
   const totalFalha = res.resultados.filter(r => r.aplicavel && !r.conforme).length;
 
-  /* Agrupa por bloco */
   const blocos = {};
   for (let b = 1; b <= 6; b++) blocos[b] = { aplicavel: [], na: [] };
   res.resultados.forEach(r => {
@@ -1588,7 +1449,7 @@ function abrirModalCriterios(procId) {
           <div class="criterios-item__desc">
             ${r.aplicavel
               ? (r.conforme ? `<em>Conforme.</em>` : `<em>Não conforme:</em> ${escapeHtml(r.mensagemFalha)} <br>→ <b>Recomendação:</b> ${escapeHtml(r.recomendacao)}`)
-              : `<em>Não aplicável:</em> ${escapeHtml(r.motivoNA || 'Regra não aplicável à combinação declarada.')}`}
+              : `<em>Não aplicável:</em> ${escapeHtml(r.motivoNA || 'Regra não aplicável.')}`}
           </div>
         </div>
         <span class="criterios-item__sev">${sevLabel}</span>
@@ -1616,55 +1477,86 @@ function abrirModalCriterios(procId) {
   els.modalCriteriosTitulo.textContent = `Critérios Ativos — ${p.nome}`;
   els.modalCriteriosBody.innerHTML = `
     <div class="criterios-resumo">
-      <div class="criterios-resumo__item" data-tipo="ok">
-        <span class="criterios-resumo__num" style="color:var(--ok);">${totalOK}</span>
-        <span class="criterios-resumo__lbl">Conformes</span>
-      </div>
-      <div class="criterios-resumo__item" data-tipo="falha">
-        <span class="criterios-resumo__num" style="color:var(--danger);">${totalFalha}</span>
-        <span class="criterios-resumo__lbl">Inconformes</span>
-      </div>
-      <div class="criterios-resumo__item" data-tipo="na">
-        <span class="criterios-resumo__num" style="color:var(--neutral);">${totalNA}</span>
-        <span class="criterios-resumo__lbl">N/A</span>
-      </div>
-      <div class="criterios-resumo__item">
-        <span class="criterios-resumo__num" style="color:var(--brand);">${totalAplic}</span>
-        <span class="criterios-resumo__lbl">Aplicáveis</span>
-      </div>
+      <div class="criterios-resumo__item" data-tipo="ok"><span class="criterios-resumo__num" style="color:var(--ok);">${totalOK}</span><span class="criterios-resumo__lbl">Conformes</span></div>
+      <div class="criterios-resumo__item" data-tipo="falha"><span class="criterios-resumo__num" style="color:var(--danger);">${totalFalha}</span><span class="criterios-resumo__lbl">Inconformes</span></div>
+      <div class="criterios-resumo__item" data-tipo="na"><span class="criterios-resumo__num" style="color:var(--neutral);">${totalNA}</span><span class="criterios-resumo__lbl">N/A</span></div>
+      <div class="criterios-resumo__item"><span class="criterios-resumo__num" style="color:var(--brand);">${totalAplic}</span><span class="criterios-resumo__lbl">Aplicáveis</span></div>
     </div>
-
     <div style="padding: 12px 14px; background: var(--surface-2); border-radius: var(--radius-sm); margin-bottom: var(--sp-5); font-size: 12.5px; color: var(--text-muted); line-height: 1.6;">
       <strong style="color:var(--text);">Contexto aplicado:</strong>
       Modalidade <b>${escapeHtml(perfis.modalidade)}</b> ·
       Natureza <b>${escapeHtml(perfis.natureza)}</b> ·
       Critério <b>${escapeHtml(labelCriterio(perfis.criterio))}</b>
     </div>
-
     ${gruposHtml || '<p style="text-align:center;color:var(--text-dim);padding:24px;">Nenhum critério a exibir.</p>'}
-
     <div class="aviso-orientativo" style="margin-top: var(--sp-5);">
       <strong>Nota</strong>
       <span>${escapeHtml(AVISO_ORIENTATIVO.replace(/^Nota:\s*/, ''))}</span>
     </div>`;
-
   els.modalCriterios.classList.remove('is-hidden');
 }
 function fecharModalCriterios() { els.modalCriterios.classList.add('is-hidden'); els.modalCriteriosBody.innerHTML = ''; }
 
 /* ==========================================================================
- * 16. PDF EXECUTIVO
+ * 16. VISUALIZADOR DE TEXTO
+ * ======================================================================== */
+function abrirModalVisualizador(procId, arqId) {
+  const p = state.processos.find(x => x.id === procId);
+  const a = p?.arquivos.find(x => x.id === arqId);
+  if (!a) { toast('Arquivo não encontrado.', 'error'); return; }
+
+  const texto = (a.texto || '').toString();
+  const conteudo = texto.length > 0
+    ? texto
+    : (a.status === 'erro'
+        ? `⚠️ Este arquivo não pôde ser processado.\n\nMotivo: ${a.erro || 'erro desconhecido'}`
+        : '(Nenhum conteúdo textual disponível para este arquivo.)');
+
+  els.modalVizTitulo.textContent = `Visualização — ${a.nomeArquivo}`;
+  els.viewerFileName.textContent = a.nomeArquivo;
+  els.viewerFileInfo.textContent = `${formatBytes(a.tamanho || 0)} · ${conteudo.length.toLocaleString('pt-BR')} caracteres · ${a.status === 'ok' ? 'processado' : (a.status === 'erro' ? 'erro' : 'pendente')}${a.licitareq ? ' · LicitaReq' : ''}`;
+  els.viewerText.textContent = conteudo;
+  els.viewerText.scrollTop = 0;
+
+  els.modalVisualizador.classList.remove('is-hidden');
+  setTimeout(() => { try { els.viewerText.focus(); } catch(_){} }, 60);
+}
+function fecharModalVisualizador() {
+  els.modalVisualizador.classList.add('is-hidden');
+  els.viewerText.textContent = '';
+  els.viewerFileName.textContent = '—';
+  els.viewerFileInfo.textContent = '—';
+  els.modalVizTitulo.textContent = 'Visualização de Texto';
+}
+async function copiarTextoVisualizador() {
+  const texto = els.viewerText.textContent || '';
+  if (!texto.trim()) { toast('Nada para copiar.', 'error'); return; }
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(texto);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = texto;
+      ta.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    toast('Texto copiado para a área de transferência.', 'ok');
+  } catch (_) { toast('Não foi possível copiar.', 'error'); }
+}
+
+/* ==========================================================================
+ * 17. PDF (mantido integralmente da v7.2 — resumido aqui por brevidade)
  * ======================================================================== */
 const PDF_PALETTE = {
   primaria: '#1e3a8a', secundaria: '#2563eb', texto: '#1e293b',
   textoMuted: '#64748b', textoDim: '#94a3b8', zebra: '#f8fafc', borda: '#e2e8f0',
   headerTexto: '#ffffff',
-  okBg: '#dcfce7', okFg: '#15803d',
-  warnBg: '#fef3c7', warnFg: '#b45309',
-  dangerBg: '#fee2e2', dangerFg: '#b91c1c',
-  neutralBg: '#e2e8f0', neutralFg: '#475569',
-  licitareqBg: '#e0e7ff', licitareqFg: '#4338ca',
-  accentTeal: '#0f766e',
+  okBg: '#dcfce7', okFg: '#15803d', warnBg: '#fef3c7', warnFg: '#b45309',
+  dangerBg: '#fee2e2', dangerFg: '#b91c1c', neutralBg: '#e2e8f0', neutralFg: '#475569',
+  licitareqBg: '#e0e7ff', licitareqFg: '#4338ca', accentTeal: '#0f766e',
 };
 function _riscoCor(r) {
   if (r === 'ALTO')  return { bg: PDF_PALETTE.dangerBg, fg: PDF_PALETTE.dangerFg };
@@ -1676,7 +1568,6 @@ function _severidadeCor(s) {
   if (s === 'MEDIA')   return { bg: PDF_PALETTE.warnBg,   fg: PDF_PALETTE.warnFg,   label: 'MÉDIA' };
   return { bg: '#e0f2fe', fg: '#075985', label: 'BAIXA' };
 }
-
 function gerarDefinicaoPDF(rep, opts = {}) {
   const tipo = opts.tipo || 'arquivo';
   const nome = opts.nome || 'Documento';
@@ -1688,59 +1579,39 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   const P = PDF_PALETTE;
   const notas = opts.notas || '';
   const licitareqInfo = opts.licitareqInfo || null;
-
   const dataGeracao = new Date();
   const dataFmt = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const numRel = String(Math.floor(Math.random() * 900) + 100) + '/' + dataGeracao.getFullYear();
 
-  const header = () => ({
-    margin: [40, 22, 40, 0],
-    columns: [
-      { text: '', width: '*' },
-      { text: 'SISTEMA LICITAAUDIT · LEI Nº 14.133/2021', alignment: 'right', fontSize: 8, color: P.textoMuted, characterSpacing: 0.4 }
-    ]
-  });
-  const footer = (cur, tot) => ({
-    margin: [40, 20, 40, 0],
-    columns: [
-      { text: `Emitido em ${dataFmt} · Relatório nº ${numRel}`, fontSize: 8, color: P.textoDim },
-      { text: `Página ${cur} de ${tot}`, alignment: 'right', fontSize: 8, color: P.textoDim }
-    ]
-  });
-
-  const banner = {
-    table: { widths: ['*'], body: [[{
-      text: tipo === 'processo' ? 'RELATÓRIO CONSOLIDADO DE AUDITORIA' : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE',
-      fillColor: P.primaria, color: '#ffffff',
-      fontSize: 12, bold: true, alignment: 'center', margin: [0, 8, 0, 8]
-    }]] },
-    layout: 'noBorders', margin: [0, 0, 0, 4]
-  };
+  const header = () => ({ margin: [40, 22, 40, 0], columns: [
+    { text: '', width: '*' },
+    { text: 'SISTEMA LICITAAUDIT · LEI Nº 14.133/2021', alignment: 'right', fontSize: 8, color: P.textoMuted, characterSpacing: 0.4 }
+  ]});
+  const footer = (cur, tot) => ({ margin: [40, 20, 40, 0], columns: [
+    { text: `Emitido em ${dataFmt} · Relatório nº ${numRel}`, fontSize: 8, color: P.textoDim },
+    { text: `Página ${cur} de ${tot}`, alignment: 'right', fontSize: 8, color: P.textoDim }
+  ]});
+  const banner = { table: { widths: ['*'], body: [[{
+    text: tipo === 'processo' ? 'RELATÓRIO CONSOLIDADO DE AUDITORIA' : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE',
+    fillColor: P.primaria, color: '#ffffff', fontSize: 12, bold: true, alignment: 'center', margin: [0, 8, 0, 8]
+  }]] }, layout: 'noBorders', margin: [0, 0, 0, 4] };
   const subtitulo = { text: nome, fontSize: 10, color: P.textoMuted, alignment: 'center', italics: true, margin: [0, 0, 0, 14] };
-
-  /* Perfil */
   const perfil = {
-    table: {
-      widths: ['22%', '78%'],
-      body: [
-        [{ text: 'PERFIL DA LICITAÇÃO', colSpan: 2, bold: true, fontSize: 9, color: '#fff', fillColor: P.secundaria, alignment: 'center', margin: [0, 4, 0, 4] }, {}],
-        [{ text: 'Modalidade:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.modalidade || '—', fontSize: 9, color: P.texto }],
-        [{ text: 'Natureza do Objeto:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.natureza || '—', fontSize: 9, color: P.texto }],
-        [{ text: 'Critério de Julgamento:', bold: true, color: P.primaria, fontSize: 9 }, { text: labelCriterio(id.criterio), fontSize: 9, color: P.texto }],
-        [{ text: 'Órgão / Entidade:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.orgao || 'Não informado', fontSize: 9, color: P.texto }],
-        [{ text: 'Nº do Processo:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.processo || 'Não identificado', fontSize: 9, color: P.texto }],
-        [{ text: 'Objeto:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.objeto || 'Não identificado', fontSize: 9, color: P.texto }],
-      ]
-    },
+    table: { widths: ['22%', '78%'], body: [
+      [{ text: 'PERFIL DA LICITAÇÃO', colSpan: 2, bold: true, fontSize: 9, color: '#fff', fillColor: P.secundaria, alignment: 'center', margin: [0, 4, 0, 4] }, {}],
+      [{ text: 'Modalidade:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.modalidade || '—', fontSize: 9, color: P.texto }],
+      [{ text: 'Natureza do Objeto:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.natureza || '—', fontSize: 9, color: P.texto }],
+      [{ text: 'Critério:', bold: true, color: P.primaria, fontSize: 9 }, { text: labelCriterio(id.criterio), fontSize: 9, color: P.texto }],
+      [{ text: 'Órgão / Entidade:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.orgao || 'Não informado', fontSize: 9, color: P.texto }],
+      [{ text: 'Nº do Processo:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.processo || 'Não identificado', fontSize: 9, color: P.texto }],
+      [{ text: 'Objeto:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.objeto || 'Não identificado', fontSize: 9, color: P.texto }],
+    ]},
     layout: {
       hLineWidth: () => 0.5, vLineWidth: () => 0, hLineColor: () => P.borda,
       paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 10, paddingRight: () => 10,
       fillColor: (i) => i === 1 ? null : (i % 2 === 0 ? P.zebra : null)
-    },
-    margin: [0, 0, 0, 12]
+    }, margin: [0, 0, 0, 12]
   };
-
-  /* LicitaReq */
   const licBloco = licitareqInfo ? {
     table: { widths: ['*'], body: [[{
       stack: [
@@ -1754,53 +1625,43 @@ function gerarDefinicaoPDF(rep, opts = {}) {
           licitareqInfo.inexigibilidade ? 'Sinalização de INEXIGIBILIDADE. ' : ''
         ], fontSize: 8.5, color: P.licitareqFg, margin: [0, 4, 0, 0] }
       ], fillColor: P.licitareqBg, margin: [10, 8, 10, 8]
-    }]] },
-    layout: 'noBorders',
-    margin: [0, 0, 0, 12]
+    }]] }, layout: 'noBorders', margin: [0, 0, 0, 12]
   } : { text: '', margin: [0, 0, 0, 0] };
 
   const totalInconf = st.falha || 0, totalCrit = st.criticas || 0, totalMed = st.medias || 0, totalBai = st.baixas || 0;
   const totalNA = st.ignoradas || 0, totalAplic = st.aplicaveis || 0;
-
   const dashboard = {
-    table: {
-      widths: ['*', '*', '*', '*'],
-      body: [[
-        { stack: [
-          { text: 'CONFORMIDADE', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
-          { text: `${score}%`, fontSize: 20, bold: true, color: P.primaria, alignment: 'center', margin: [0, 4, 0, 0] }
-        ], fillColor: P.zebra, margin: [6, 10, 6, 10] },
-        { stack: [
-          { text: 'RISCO', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
-          { table: { widths: ['*'], body: [[{ text: risco, fontSize: 11, bold: true, color: coresRisco.fg, fillColor: coresRisco.bg, alignment: 'center', margin: [0, 5, 0, 5] }]] }, layout: 'noBorders', margin: [0, 6, 0, 0] }
-        ], fillColor: P.zebra, margin: [6, 10, 6, 10] },
-        { stack: [
-          { text: 'ACHADOS', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
-          { text: String(totalInconf), fontSize: 20, bold: true, color: totalInconf > 0 ? P.dangerFg : P.okFg, alignment: 'center', margin: [0, 4, 0, 0] },
-          { text: `${totalCrit}C · ${totalMed}M · ${totalBai}B`, fontSize: 7, color: P.textoDim, alignment: 'center', margin: [0, 2, 0, 0] }
-        ], fillColor: P.zebra, margin: [6, 10, 6, 10] },
-        { stack: [
-          { text: 'ESCOPO', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
-          { text: String(totalAplic), fontSize: 20, bold: true, color: P.secundaria, alignment: 'center', margin: [0, 4, 0, 0] },
-          { text: `${totalNA} N/A`, fontSize: 7, color: P.neutralFg, alignment: 'center', margin: [0, 2, 0, 0] }
-        ], fillColor: P.zebra, margin: [6, 10, 6, 10] }
-      ]]
-    },
+    table: { widths: ['*', '*', '*', '*'], body: [[
+      { stack: [
+        { text: 'CONFORMIDADE', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
+        { text: `${score}%`, fontSize: 20, bold: true, color: P.primaria, alignment: 'center', margin: [0, 4, 0, 0] }
+      ], fillColor: P.zebra, margin: [6, 10, 6, 10] },
+      { stack: [
+        { text: 'RISCO', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
+        { table: { widths: ['*'], body: [[{ text: risco, fontSize: 11, bold: true, color: coresRisco.fg, fillColor: coresRisco.bg, alignment: 'center', margin: [0, 5, 0, 5] }]] }, layout: 'noBorders', margin: [0, 6, 0, 0] }
+      ], fillColor: P.zebra, margin: [6, 10, 6, 10] },
+      { stack: [
+        { text: 'ACHADOS', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
+        { text: String(totalInconf), fontSize: 20, bold: true, color: totalInconf > 0 ? P.dangerFg : P.okFg, alignment: 'center', margin: [0, 4, 0, 0] },
+        { text: `${totalCrit}C · ${totalMed}M · ${totalBai}B`, fontSize: 7, color: P.textoDim, alignment: 'center', margin: [0, 2, 0, 0] }
+      ], fillColor: P.zebra, margin: [6, 10, 6, 10] },
+      { stack: [
+        { text: 'ESCOPO', fontSize: 7.5, bold: true, color: P.textoMuted, characterSpacing: 0.4, alignment: 'center' },
+        { text: String(totalAplic), fontSize: 20, bold: true, color: P.secundaria, alignment: 'center', margin: [0, 4, 0, 0] },
+        { text: `${totalNA} N/A`, fontSize: 7, color: P.neutralFg, alignment: 'center', margin: [0, 2, 0, 0] }
+      ], fillColor: P.zebra, margin: [6, 10, 6, 10] }
+    ]]},
     layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => P.borda, vLineColor: () => P.borda },
     margin: [0, 0, 0, 12]
   };
-
   const avisoPDF = {
     table: { widths: ['*'], body: [[{
-      text: AVISO_ORIENTATIVO,
-      fontSize: 8, color: P.textoMuted, italics: true,
+      text: AVISO_ORIENTATIVO, fontSize: 8, color: P.textoMuted, italics: true,
       fillColor: P.zebra, margin: [10, 8, 10, 8], alignment: 'justify'
     }]] },
     layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => P.borda, vLineColor: () => P.borda },
     margin: [0, 0, 0, 14]
   };
-
-  /* Notas */
   const notasBloco = (tipo === 'processo' && notas.trim()) ? {
     table: { widths: ['*'], body: [[{
       stack: [
@@ -1811,8 +1672,6 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => P.borda, vLineColor: () => P.borda },
     margin: [0, 0, 0, 14]
   } : { text: '', margin: [0, 0, 0, 0] };
-
-  /* Resumo por bloco */
   const blocos = st.porBloco || {};
   const linhasBlocos = [1, 2, 3, 4, 5, 6].map(b => {
     const x = blocos[b] || { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0, na: 0 };
@@ -1828,34 +1687,26 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     ];
   });
   const resumoBlocos = {
-    table: {
-      headerRows: 1,
-      widths: ['6%', '42%', '14%', '12%', '12%', '14%'],
-      body: [
-        [
-          { text: '#', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: 'BLOCO DE VERIFICAÇÃO', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, margin: [0, 4, 0, 4] },
-          { text: 'OK/TOTAL', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: 'FALHAS', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: 'N/A', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: '% OK', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] }
-        ],
-        ...linhasBlocos
-      ]
-    },
+    table: { headerRows: 1, widths: ['6%', '42%', '14%', '12%', '12%', '14%'], body: [
+      [
+        { text: '#', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
+        { text: 'BLOCO DE VERIFICAÇÃO', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, margin: [0, 4, 0, 4] },
+        { text: 'OK/TOTAL', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
+        { text: 'FALHAS', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
+        { text: 'N/A', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
+        { text: '% OK', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] }
+      ],
+      ...linhasBlocos
+    ]},
     layout: {
       hLineWidth: () => 0.4, vLineWidth: () => 0.4, hLineColor: () => P.borda, vLineColor: () => P.borda,
       fillColor: (i) => i === 0 ? P.primaria : (i % 2 === 0 ? P.zebra : null),
       paddingTop: () => 4, paddingBottom: () => 4, paddingLeft: () => 6, paddingRight: () => 6
-    },
-    margin: [0, 0, 0, 14]
+    }, margin: [0, 0, 0, 14]
   };
-
-  /* Achados */
   const achadosTodas = (rep.resultados || []).filter(r => r.aplicavel && !r.conforme);
-  const achadosPrioritarios = achadosTodas.filter(r => r.severidade !== 'BAIXA');
-  const achadosSecundarios = achadosTodas.filter(r => r.severidade === 'BAIXA');
-
+  const achadosPrio = achadosTodas.filter(r => r.severidade !== 'BAIXA');
+  const achadosSec = achadosTodas.filter(r => r.severidade === 'BAIXA');
   const mkCellAchado = r => {
     const sc = _severidadeCor(r.severidade);
     return [
@@ -1871,48 +1722,33 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       { text: r.fundamento, fontSize: 7, color: P.secundaria, italics: true, margin: [4, 3, 4, 3] }
     ];
   };
-
   const achadosBody = achadosTodas.length === 0
-    ? [[
-        { text: '—', alignment: 'center', color: P.textoDim, fontSize: 9 },
-        { text: 'Nenhuma inconformidade identificada entre os checkpoints essenciais.', italics: true, color: P.okFg, colSpan: 3, fontSize: 9, alignment: 'center', margin: [0, 10, 0, 10] },
-        {}, {}
-      ]]
-    : [
-        ...achadosPrioritarios.map(mkCellAchado),
-        ...(achadosSecundarios.length > 0 ? [[
-          { text: 'BAIXAS', fontSize: 7, bold: true, color: P.textoMuted, alignment: 'center' },
-          { text: `${achadosSecundarios.length} inconformidade(s) de severidade baixa — vide sistema para detalhes.`, fontSize: 7.5, color: P.textoMuted, italics: true, colSpan: 2, margin: [4, 3, 4, 3] },
-          {}
-        ]] : [])
-      ];
-
+    ? [[{ text: '—', alignment: 'center', color: P.textoDim, fontSize: 9 },
+        { text: 'Nenhuma inconformidade identificada.', italics: true, color: P.okFg, colSpan: 3, fontSize: 9, alignment: 'center', margin: [0, 10, 0, 10] }, {}, {}]]
+    : [...achadosPrio.map(mkCellAchado),
+       ...(achadosSec.length > 0 ? [[
+         { text: 'BAIXAS', fontSize: 7, bold: true, color: P.textoMuted, alignment: 'center' },
+         { text: `${achadosSec.length} inconformidade(s) baixa(s) — vide sistema.`, fontSize: 7.5, color: P.textoMuted, italics: true, colSpan: 2, margin: [4, 3, 4, 3] }, {}
+       ]] : [])];
   const detalhado = {
-    table: {
-      headerRows: 1, dontBreakRows: true,
-      widths: ['14%', '60%', '26%'],
-      body: [
-        [
-          { text: 'GRAU', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: 'ACHADO E RECOMENDAÇÃO', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, margin: [0, 4, 0, 4] },
-          { text: 'FUNDAMENTO LEGAL', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, margin: [0, 4, 0, 4] }
-        ],
-        ...achadosBody
-      ]
-    },
+    table: { headerRows: 1, dontBreakRows: true, widths: ['14%', '60%', '26%'], body: [
+      [
+        { text: 'GRAU', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, alignment: 'center', margin: [0, 4, 0, 4] },
+        { text: 'ACHADO E RECOMENDAÇÃO', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, margin: [0, 4, 0, 4] },
+        { text: 'FUNDAMENTO LEGAL', bold: true, fontSize: 8, color: '#fff', fillColor: P.primaria, margin: [0, 4, 0, 4] }
+      ], ...achadosBody
+    ]},
     layout: {
       hLineWidth: () => 0.4, vLineWidth: () => 0.4, hLineColor: () => P.borda, vLineColor: () => P.borda,
       fillColor: (i) => i === 0 ? P.primaria : null,
       paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 6, paddingRight: () => 6
-    },
-    margin: [0, 0, 0, 16]
+    }, margin: [0, 0, 0, 16]
   };
-
   const parecerTexto = risco === 'ALTO'
-    ? 'Publicação desaconselhada — identificados vícios de natureza crítica/impeditiva. Recomenda-se saneamento integral antes de qualquer publicação.'
+    ? 'Publicação desaconselhada — vícios críticos/impeditivos. Saneamento integral antes de qualquer publicação.'
     : risco === 'MÉDIO'
-      ? 'Aprovado com ressalvas — inconformidades de severidade média devem ser sanadas previamente à publicação.'
-      : 'Aprovado — o processo contempla os requisitos essenciais da Lei nº 14.133/2021.';
+      ? 'Aprovado com ressalvas — inconformidades médias devem ser sanadas previamente à publicação.'
+      : 'Aprovado — contempla os requisitos essenciais da Lei nº 14.133/2021.';
   const corParecerBg = risco === 'ALTO' ? P.dangerBg : risco === 'MÉDIO' ? P.warnBg : P.okBg;
   const parecer = {
     table: { widths: ['*'], body: [[{
@@ -1920,96 +1756,61 @@ function gerarDefinicaoPDF(rep, opts = {}) {
         { text: 'PARECER TÉCNICO', fontSize: 8, bold: true, color: P.primaria, characterSpacing: 0.5 },
         { text: parecerTexto, fontSize: 9, color: P.texto, margin: [0, 5, 0, 0], alignment: 'justify', lineHeight: 1.4 }
       ], fillColor: corParecerBg, margin: [12, 10, 12, 10]
-    }]] },
-    layout: 'noBorders', margin: [0, 0, 0, 20]
+    }]]}, layout: 'noBorders', margin: [0, 0, 0, 20]
   };
-
   const assinatura = {
-    table: {
-      dontBreakRows: true, widths: ['*'],
-      body: [[{
-        stack: [
-          { text: ' ', margin: [0, 16, 0, 0] },
-          { canvas: [{ type: 'line', x1: 130, y1: 0, x2: 385, y2: 0, lineWidth: 0.8, lineColor: '#334155' }] },
-          { text: 'Equipe de Auditoria de Controle Interno', fontSize: 9.5, bold: true, alignment: 'center', margin: [0, 5, 0, 2], color: P.texto },
-          { text: 'LicitaAudit — Análise Automatizada', fontSize: 8, alignment: 'center', color: P.textoMuted },
-          { text: `${dataFmt} · Relatório ${numRel}`, fontSize: 7.5, alignment: 'center', color: P.textoDim, margin: [0, 4, 0, 0] }
-        ], margin: [0, 6, 0, 6]
-      }]]
-    },
-    layout: 'noBorders'
+    table: { dontBreakRows: true, widths: ['*'], body: [[{
+      stack: [
+        { text: ' ', margin: [0, 16, 0, 0] },
+        { canvas: [{ type: 'line', x1: 130, y1: 0, x2: 385, y2: 0, lineWidth: 0.8, lineColor: '#334155' }] },
+        { text: 'Equipe de Auditoria de Controle Interno', fontSize: 9.5, bold: true, alignment: 'center', margin: [0, 5, 0, 2], color: P.texto },
+        { text: 'LicitaAudit — Análise Automatizada', fontSize: 8, alignment: 'center', color: P.textoMuted },
+        { text: `${dataFmt} · Relatório ${numRel}`, fontSize: 7.5, alignment: 'center', color: P.textoDim, margin: [0, 4, 0, 0] }
+      ], margin: [0, 6, 0, 6]
+    }]]}, layout: 'noBorders'
   };
 
   return {
-    pageSize: 'A4', pageMargins: [40, 50, 40, 50],
-    header, footer,
+    pageSize: 'A4', pageMargins: [40, 50, 40, 50], header, footer,
     defaultStyle: { font: 'Roboto', fontSize: 9, color: P.texto, lineHeight: 1.3 },
     content: [
       banner, subtitulo, perfil, licBloco, dashboard, avisoPDF, notasBloco,
       { text: 'RESUMO POR BLOCO DE VERIFICAÇÃO', style: 'secaoTitulo', keepWithNext: true },
       resumoBlocos,
       { text: 'ACHADOS PRIORITÁRIOS', style: 'secaoTitulo', keepWithNext: true },
-      detalhado,
-      parecer, assinatura
+      detalhado, parecer, assinatura
     ],
-    styles: {
-      secaoTitulo: { fontSize: 10.5, bold: true, color: P.primaria, margin: [0, 8, 0, 6], characterSpacing: 0.3, keepWithNext: true }
-    }
+    styles: { secaoTitulo: { fontSize: 10.5, bold: true, color: P.primaria, margin: [0, 8, 0, 6], characterSpacing: 0.3, keepWithNext: true } }
   };
 }
-
-/* --------------------------------------------------------------------------
- * Wrappers públicos
- * ------------------------------------------------------------------------ */
 function exportarRelatorioAuditPDF(arq, processo = null) {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   if (!arq || arq.status !== 'ok') { toast('Arquivo não disponível.', 'error'); return; }
-  const dd = gerarDefinicaoPDF(arq, {
-    tipo: 'arquivo',
-    nome: arq.nomeArquivo,
-    licitareqInfo: arq.licitareq || null,
-  });
+  const dd = gerarDefinicaoPDF(arq, { tipo: 'arquivo', nome: arq.nomeArquivo, licitareqInfo: arq.licitareq || null });
   const safe = String(arq.nomeArquivo || 'arquivo').replace(/[/\\?%*:|"<>]/g, '_');
   try { pdfMake.createPdf(dd).download(`Relatorio_${safe}.pdf`); toast('PDF individual gerado.', 'ok'); }
   catch (e) { console.error(e); toast('Erro ao gerar PDF.', 'error'); }
 }
-
 function exportarRelatorioProcessoConsolidadoPDF(processo) {
   const arquivosOk = (processo?.arquivos || []).filter(a => a.status === 'ok');
   if (!arquivosOk.length) { toast('Nenhum arquivo analisado.', 'error'); return; }
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
-
   const corpus = arquivosOk.map(a => `\n===== ${a.nomeArquivo} =====\n${a.texto}`).join('\n');
-  const perfis = getPerfilProcesso(processo);
   const paramObjeto     = (processo.metadados?.natureza  !== 'auto') ? processo.metadados.natureza  : els.paramObjeto.value;
   const paramModalidade = (processo.metadados?.modalidade !== 'auto') ? processo.metadados.modalidade : els.paramModalidade.value;
   const paramCriterio   = (processo.metadados?.criterio   !== 'auto') ? processo.metadados.criterio   : els.paramCriterio.value;
-
-  const res = analisarTextoIndividual(corpus, {
-    paramObjeto, paramModalidade, paramCriterio,
-    nomeArquivo: '',
-  });
-
-  /* Coleta info LicitaReq agregada */
+  const res = analisarTextoIndividual(corpus, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: '' });
   const arquivosLR = processo.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
   const licInfo = arquivosLR.length ? arquivosLR[0].licitareq : null;
-
-  const dd = gerarDefinicaoPDF(res, {
-    tipo: 'processo',
-    nome: processo.nome,
-    notas: processo.notas || '',
-    licitareqInfo: licInfo,
-  });
+  const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: processo.nome, notas: processo.notas || '', licitareqInfo: licInfo });
   const safe = String(processo.nome || 'processo').replace(/[/\\?%*:|"<>]/g, '_');
   try { pdfMake.createPdf(dd).download(`Relatorio_Processo_${safe}.pdf`); toast('PDF consolidado gerado.', 'ok'); }
   catch (e) { console.error(e); toast('Erro ao gerar PDF.', 'error'); }
 }
-
 function exportarPDFTodos() {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   const lista = state.processos.filter(p => p.arquivos.some(a => a.status === 'ok'));
-  if (!lista.length) { toast('Nenhum processo com arquivos analisados.', 'error'); return; }
-
+  if (!lista.length) { toast('Nenhum processo com arquivos.', 'error'); return; }
   const contents = [];
   lista.forEach((p, idx) => {
     const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
@@ -2020,26 +1821,21 @@ function exportarPDFTodos() {
     const res = analisarTextoIndividual(corpus, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: '' });
     const arquivosLR = p.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
     const licInfo = arquivosLR.length ? arquivosLR[0].licitareq : null;
-    const dd = gerarDefinicaoPDF(res, {
-      tipo: 'processo', nome: p.nome,
-      notas: p.notas || '',
-      licitareqInfo: licInfo,
-    });
+    const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: p.nome, notas: p.notas || '', licitareqInfo: licInfo });
     if (idx > 0) contents.push({ text: '', pageBreak: 'before' });
     contents.push(...dd.content);
   });
-
   const ddFinal = {
     pageSize: 'A4', pageMargins: [40, 50, 40, 50],
     defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.3 },
     header: () => ({ margin: [40, 22, 40, 0], columns: [
       { text: '', width: '*' },
       { text: 'SISTEMA LICITAAUDIT · LOTE DE RELATÓRIOS', alignment: 'right', fontSize: 8, color: PDF_PALETTE.textoMuted, characterSpacing: 0.4 }
-    ] }),
+    ]}),
     footer: (p, n) => ({ margin: [40, 20, 40, 0], columns: [
       { text: 'Documento gerado pelo LicitaAudit · Lei nº 14.133/2021', fontSize: 8, color: PDF_PALETTE.textoDim },
       { text: `Página ${p} de ${n}`, alignment: 'right', fontSize: 8, color: PDF_PALETTE.textoDim }
-    ] }),
+    ]}),
     content: contents
   };
   try { pdfMake.createPdf(ddFinal).download(`LicitaAudit_Lote_${Date.now()}.pdf`); toast(`${lista.length} processo(s) em PDF único.`, 'ok'); }
@@ -2047,12 +1843,12 @@ function exportarPDFTodos() {
 }
 
 /* ==========================================================================
- * 17. JSON — EXPORTAÇÃO E IMPORTAÇÃO
+ * 18. JSON
  * ======================================================================== */
 function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
-    ferramenta: 'LicitaAudit', versao: '7.1.0', exportadoEm: new Date().toISOString(),
+    ferramenta: 'LicitaAudit', versao: '7.3.0', exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags, criadoEm: p.criadoEm,
       notas: p.notas || '',
@@ -2140,10 +1936,7 @@ async function importarJSONMultiplos(files) {
         state.processos.push(novo);
         totalP++; totalA += novo.arquivos.length;
       }
-    } catch (err) {
-      console.error(err);
-      falhas.push(`${file.name}: ${err.message || 'JSON inválido'}`);
-    }
+    } catch (err) { console.error(err); falhas.push(`${file.name}: ${err.message || 'JSON inválido'}`); }
   }
   hideLoader();
   if (totalP > 0) {
@@ -2161,7 +1954,7 @@ async function importarJSONMultiplos(files) {
 async function importarJSON(file) { return importarJSONMultiplos([file]); }
 
 /* ==========================================================================
- * 18. TEMA
+ * 19. TEMA
  * ======================================================================== */
 function initTheme() {
   const stored = localStorage.getItem('licitaudit:theme');
@@ -2176,7 +1969,7 @@ function toggleTheme() {
 }
 
 /* ==========================================================================
- * 19. EXEMPLO
+ * 20. EXEMPLO
  * ======================================================================== */
 function carregarExemplo() {
   const exemplo = `PROCESSO ADMINISTRATIVO: 00000.004512/2026-88
@@ -2263,7 +2056,7 @@ Documento gerado eletronicamente pelo sistema LicitaReq — Motor de regras Lei 
 }
 
 /* ==========================================================================
- * 20. MENU MOBILE + IMPORT JSON DINÂMICO
+ * 21. MENU MOBILE + IMPORT JSON
  * ======================================================================== */
 function abrirSidebar() {
   els.sidebar?.classList.add('is-open');
@@ -2294,7 +2087,7 @@ function abrirInputJSONMultiplo() {
 }
 
 /* ==========================================================================
- * 21. EVENTOS GLOBAIS E BOOTSTRAP
+ * 22. EVENTOS GLOBAIS E BOOTSTRAP
  * ======================================================================== */
 function bindEventosGlobais() {
   els.btnNovoProcesso?.addEventListener('click', () => criarProcesso());
@@ -2310,13 +2103,23 @@ function bindEventosGlobais() {
     e.target.value = '';
   });
 
+  /* Fechar modais */
   $$('[data-close-modal]').forEach(el => el.addEventListener('click', fecharModal));
   $$('[data-close-modal-crit]').forEach(el => el.addEventListener('click', fecharModalCriterios));
+  $$('[data-close-modal-viz]').forEach(el => el.addEventListener('click', fecharModalVisualizador));
+
+  /* Botão copiar do visualizador */
+  els.btnCopiarTextoArq?.addEventListener('click', copiarTextoVisualizador);
+
+  /* Esc fecha modal mais alto */
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !els.modal.classList.contains('is-hidden')) fecharModal();
-    if (e.key === 'Escape' && !els.modalCriterios.classList.contains('is-hidden')) fecharModalCriterios();
-    if (e.key === 'Escape') fecharSidebar();
+    if (e.key !== 'Escape') return;
+    if (!els.modalVisualizador.classList.contains('is-hidden')) { fecharModalVisualizador(); return; }
+    if (!els.modalCriterios.classList.contains('is-hidden'))    { fecharModalCriterios();    return; }
+    if (!els.modal.classList.contains('is-hidden'))             { fecharModal();             return; }
+    fecharSidebar();
   });
+
   els.sidebarToggle?.addEventListener('click', () => {
     els.sidebar.classList.contains('is-open') ? fecharSidebar() : abrirSidebar();
   });
@@ -2325,7 +2128,6 @@ function bindEventosGlobais() {
     if (window.matchMedia('(max-width: 768px)').matches && e.target.closest('button, .btn')) fecharSidebar();
   });
 
-  /* Parâmetros globais → reanálise de todos os processos */
   ['paramObjeto', 'paramModalidade', 'paramCriterio'].forEach(id => {
     els[id]?.addEventListener('change', () => {
       state.processos.forEach(p => reanalisarProcesso(p));
@@ -2347,7 +2149,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v7.1 · Auditoria híbrida + LicitaReq + Notas + Critérios'
+    '· v7.3 · Requerimentos/DFD separados + Visualizador de texto'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
