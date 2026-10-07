@@ -1,10 +1,12 @@
 /* ============================================================================
- * LicitaAudit · app.js — v6.1
+ * LicitaAudit · app.js — v6.2
  * ----------------------------------------------------------------------------
  * • Workspaces por processo com navegação em abas.
- * • Design executivo + cálculos calibrados (crítica → ALTO forçado).
+ * • Sidebar fixo (CSS) + conteúdo com scroll independente.
+ * • Cores dinâmicas em tempo real (header, aba ativa, indicadores).
+ * • Core Engine de 30 verificações nucleares condicionais.
+ * • Score do arquivo = 100 − Σ pesos; crítica → risco ALTO forçado.
  * • Score do processo = média simples dos scores dos arquivos.
- * • Risco do processo = ALTO se qualquer arquivo for ALTO.
  * • PDF dual: arquivo individual + processo consolidado.
  * ========================================================================== */
 'use strict';
@@ -54,16 +56,19 @@ const PESOS = { CRITICA: 5, MEDIA: 2, BAIXA: 0.5 };
 
 const CORES_PRESET = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#64748b'];
 
-const uid = (p = 'id') => `${p}_${Math.random().toString(36).slice(2, 10)}`;
-const extOf = (n) => (n.split('.').pop() || '').toLowerCase();
+const uid       = (p = 'id') => `${p}_${Math.random().toString(36).slice(2, 10)}`;
+const extOf     = (n) => (n.split('.').pop() || '').toLowerCase();
+
 const formatBytes = (b) => {
   if (!b) return '0 B';
   const u = ['B','KB','MB','GB'], i = Math.floor(Math.log(b) / Math.log(1024));
   return `${(b / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${u[i]}`;
 };
+
 const escapeHtml = (s) => String(s ?? '')
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
 const truncate = (n, max = 34) => {
   const d = n.lastIndexOf('.');
   if (d <= 0) return n.length > max ? n.slice(0, max) + '…' : n;
@@ -71,12 +76,14 @@ const truncate = (n, max = 34) => {
   if (base.length <= max) return n;
   return base.slice(0, max - 1).trimEnd() + '…' + ext;
 };
+
 const parseValorBR = (s) => {
   if (!s) return 0;
   const limpo = String(s).replace(/[^\d,.-]/g,'').replace(/\.(?=\d{3})/g,'').replace(',','.');
   const n = parseFloat(limpo);
   return isNaN(n) ? 0 : n;
 };
+
 const formatarValorBR = (n) => !n || n <= 0 ? '' : n.toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
 
 function toast(msg, kind = 'ok') {
@@ -90,6 +97,7 @@ function toast(msg, kind = 'ok') {
     setTimeout(() => els.toast.classList.add('is-hidden'), 250);
   }, 2800);
 }
+
 function showLoader(t) { els.loaderText.textContent = t || 'Processando…'; els.loader.classList.remove('is-hidden'); }
 function hideLoader() { els.loader.classList.add('is-hidden'); }
 
@@ -119,6 +127,7 @@ const KB = {
   comuns: /(material\s+de\s+escrit[oó]rio|material\s+de\s+expediente|papel\s+a4|caneta|t[oô]ner|cartucho|l[ií]mp[eê]za|higiene|aliment[ií]cio|uniforme|mobili[aá]rio|cadeira|mesa|vigil[aâ]ncia|combust[íi]vel)/i,
   empresa: /\b[A-ZÀ-Ú][\wÀ-ú&.'-]*(?:\s+(?:[A-ZÀ-Ú][\wÀ-ú&.'-]*|de|da|do|das|dos|e)){1,6}\s+(?:Ltda\.?|LTDA\.?|S\.A\.?|S\/A|ME|EIRELI|EPP)\b/,
 };
+
 const firstMatch = (text, rx) => {
   for (const r of rx) { const m = text.match(r); if (m) return m; }
   return null;
@@ -175,14 +184,17 @@ function extrairValor(corpus) {
   const m = corpus.match(/R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i);
   return m ? parseValorBR(m[1]) : 0;
 }
+
 function extrairProcesso(corpus) {
   const m = corpus.match(/(?:processo\s+administrativo|processo|edital|memorando|of[íi]cio)\s*(?:n[º°.]?|n[uú]mero)?\s*([\d][\d.\/\-\w]{3,40})/i);
   return m ? m[0].replace(/\s+/g, ' ').trim() : 'Não identificado';
 }
+
 function extrairOrgao(corpus) {
   const m = corpus.match(/\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Secretaria|Funda[cç][aã]o|Autarquia)[^\n,.;]{0,80}/i);
   return m ? m[0].replace(/\s+/g, ' ').trim() : 'ÓRGÃO / ENTIDADE PÚBLICA';
 }
+
 function extrairCriterio(corpus) {
   const m = {
     'menor-preco':    /\bmenor\s+pre[cç]o\b/i,
@@ -195,6 +207,7 @@ function extrairCriterio(corpus) {
   for (const [k, rx] of Object.entries(m)) if (rx.test(corpus)) return k;
   return 'indefinido';
 }
+
 function classificarNatureza(corpus, forcar = 'auto') {
   if (forcar && forcar !== 'auto') {
     const mapa = {
@@ -214,6 +227,7 @@ function classificarNatureza(corpus, forcar = 'auto') {
   if (KB.comuns.test(t))         return 'Bens e serviços comuns';
   return 'Bens e serviços comuns';
 }
+
 function classificarTipoObjeto(meta) {
   const texto = [meta?.objeto?.texto || '', meta?.objetoField || ''].join(' ').toLowerCase();
   const nat   = (meta?.natureza || '').toLowerCase();
@@ -320,11 +334,6 @@ const MATRIZ_CORE_30 = [
 /* ==========================================================================
  * 6. MOTOR DE AVALIAÇÃO — CÁLCULOS CALIBRADOS
  * ======================================================================== */
-
-/**
- * Executa a matriz e retorna os resultados + score + risco do ARQUIVO.
- * ⚠️ Cálculo calibrado: crítica presente força risco ALTO.
- */
 function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio) {
   const ctx = { corpus, meta, natureza, modalidade, criterio };
 
@@ -341,7 +350,6 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio) 
   const pesoTotal  = aplicaveis.reduce((s, r) => s + r.peso, 0);
   const pesoFalha  = aplicaveis.filter(r => !r.conforme).reduce((s, r) => s + r.peso, 0);
 
-  // Score do arquivo (0 a 100)
   const score = pesoTotal > 0
     ? Math.max(0, Math.round((100 - (pesoFalha / pesoTotal) * 100) * 10) / 10)
     : 100;
@@ -350,7 +358,7 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio) 
   const medias   = aplicaveis.filter(r => !r.conforme && r.severidade === 'MEDIA').length;
   const baixas   = aplicaveis.filter(r => !r.conforme && r.severidade === 'BAIXA').length;
 
-  // ⚠️ REGRA CRÍTICA: 1+ falha CRÍTICA → Risco ALTO forçado
+  // Regra: 1+ falha CRÍTICA → Risco ALTO forçado
   const risco = calcularRiscoArquivo(score, criticas);
 
   const porBloco = {};
@@ -371,12 +379,10 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio) 
     totalIgnoradas: resultados.length - aplicaveis.length,
     pesoTotal, pesoFalha, score,
     criticasFalha: criticas, mediasFalha: medias, baixasFalha: baixas,
-    porBloco,
-    risco,
+    porBloco, risco,
   };
 }
 
-/** Nível de risco do ARQUIVO. Crítica força ALTO. */
 function calcularRiscoArquivo(score, criticas) {
   if (criticas > 0) return 'ALTO';
   if (score < 70)   return 'ALTO';
@@ -384,7 +390,6 @@ function calcularRiscoArquivo(score, criticas) {
   return 'MÉDIO';
 }
 
-/** Score CONSOLIDADO do processo = MÉDIA SIMPLES dos scores dos arquivos. */
 function calcularScoreProcesso(arquivos) {
   const ok = arquivos.filter(a => a.status === 'ok' && typeof a.score === 'number');
   if (!ok.length) return 0;
@@ -392,7 +397,6 @@ function calcularScoreProcesso(arquivos) {
   return Math.round((soma / ok.length) * 10) / 10;
 }
 
-/** Risco CONSOLIDADO do processo = ALTO se qualquer arquivo for ALTO. */
 function calcularRiscoProcesso(arquivos) {
   const ok = arquivos.filter(a => a.status === 'ok');
   if (!ok.length) return '—';
@@ -656,7 +660,15 @@ function renderTabs() {
   const tabs = state.processos.map(p => {
     const ativo = p.id === state.ativo;
     const risco = calcularRiscoProcesso(p.arquivos);
-    const corRisco = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+    const corRisco = risco === 'ALTO' ? 'var(--danger)'
+                   : risco === 'MÉDIO' ? 'var(--warn)'
+                   : risco === 'BAIXO' ? 'var(--ok)'
+                   : 'var(--text-dim)';
+
+    // Se a aba está ativa, usa a cor do processo; senão, a cor do risco
+    const borderLeftColor = ativo ? p.cor : 'transparent';
+    const dotColor = p.cor || corRisco;
+
     return `
       <button
         class="tab ${ativo ? 'is-active' : ''}"
@@ -664,8 +676,9 @@ function renderTabs() {
         aria-selected="${ativo}"
         data-tab-proc="${p.id}"
         title="${escapeHtml(p.nome)}"
+        style="border-left-color:${borderLeftColor};"
       >
-        <span class="tab__dot" style="background:${corRisco};"></span>
+        <span class="tab__dot" style="background:${dotColor};"></span>
         ${escapeHtml(truncate(p.nome, 24))}
       </button>
     `;
@@ -697,8 +710,14 @@ function renderWorkspace() {
 
   const scoreConsolidado = calcularScoreProcesso(p.arquivos);
   const riscoConsolidado = calcularRiscoProcesso(p.arquivos);
-  const corRisco = riscoConsolidado === 'ALTO' ? 'var(--danger)' : riscoConsolidado === 'MÉDIO' ? 'var(--warn)' : riscoConsolidado === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
-  const badgeCls = riscoConsolidado === 'ALTO' ? 'badge--alto' : riscoConsolidado === 'MÉDIO' ? 'badge--medio' : riscoConsolidado === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
+  const corRisco = riscoConsolidado === 'ALTO' ? 'var(--danger)'
+                 : riscoConsolidado === 'MÉDIO' ? 'var(--warn)'
+                 : riscoConsolidado === 'BAIXO' ? 'var(--ok)'
+                 : 'var(--text-dim)';
+  const badgeCls = riscoConsolidado === 'ALTO' ? 'badge--alto'
+                 : riscoConsolidado === 'MÉDIO' ? 'badge--medio'
+                 : riscoConsolidado === 'BAIXO' ? 'badge--baixo'
+                 : 'badge--neutro';
 
   const totalArquivos = p.arquivos.length;
   const totalAplicaveis = p.arquivos.filter(a => a.status === 'ok').reduce((s, a) => s + (a.estatisticas?.aplicaveis || 0), 0);
@@ -709,7 +728,7 @@ function renderWorkspace() {
 
   els.workspace.innerHTML = `
     <!-- Cabeçalho executivo -->
-    <header class="ws-header">
+    <header class="ws-header" style="border-top-color:${p.cor};" data-proc="${p.id}">
       <div class="ws-header__left">
         <input
           type="text"
@@ -719,6 +738,7 @@ function renderWorkspace() {
           title="Clique para renomear"
         />
         <div class="ws-tags">
+          <span class="processo-cor-indicator" style="background:${p.cor};" aria-hidden="true"></span>
           ${p.tags.map(t => `
             <span class="tag">
               ${escapeHtml(t)}
@@ -824,9 +844,18 @@ function renderWorkspace() {
 function renderLinhaArquivo(procId, arq) {
   const score = arq.status === 'ok' && typeof arq.score === 'number' ? `${arq.score.toFixed(1)}%` : (arq.status === 'erro' ? 'Erro' : '…');
   const risco = arq.risco || '—';
-  const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
-  const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
-  const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+  const badgeCls = risco === 'ALTO' ? 'badge--alto'
+                 : risco === 'MÉDIO' ? 'badge--medio'
+                 : risco === 'BAIXO' ? 'badge--baixo'
+                 : 'badge--neutro';
+  const emoji = risco === 'ALTO' ? '🔴'
+              : risco === 'MÉDIO' ? '🟡'
+              : risco === 'BAIXO' ? '🟢'
+              : '⚪';
+  const corScore = risco === 'ALTO' ? 'var(--danger)'
+                 : risco === 'MÉDIO' ? 'var(--warn)'
+                 : risco === 'BAIXO' ? 'var(--ok)'
+                 : 'var(--text-dim)';
 
   return `
     <tr>
@@ -883,12 +912,32 @@ function bindEventosWorkspace() {
     inputNome.addEventListener('keydown', e => { if (e.key === 'Enter') inputNome.blur(); });
   }
 
-  // Cor
+  // ⭐ Cor — atualização em tempo real (estado + DOM)
   const colorInput = els.workspace.querySelector('[data-color]');
   if (colorInput) {
     colorInput.addEventListener('input', () => {
-      const p = state.processos.find(x => x.id === colorInput.dataset.color);
-      if (p) p.cor = colorInput.value;
+      const procId = colorInput.dataset.color;
+      const novaCor = colorInput.value;
+
+      // 1. Estado global
+      const p = state.processos.find(x => x.id === procId);
+      if (p) p.cor = novaCor;
+
+      // 2. Cabeçalho do workspace (borda superior)
+      const header = els.workspace.querySelector('.ws-header');
+      if (header) header.style.borderTopColor = novaCor;
+
+      // 3. Indicador de cor no header
+      const indicador = els.workspace.querySelector('.processo-cor-indicator');
+      if (indicador) indicador.style.backgroundColor = novaCor;
+
+      // 4. Aba correspondente no topo — borda esquerda + dot
+      const aba = els.tabsProcessos.querySelector(`[data-tab-proc="${procId}"]`);
+      if (aba) {
+        aba.style.borderLeftColor = novaCor;
+        const dot = aba.querySelector('.tab__dot');
+        if (dot) dot.style.background = novaCor;
+      }
     });
   }
 
@@ -1110,7 +1159,6 @@ function _buildDocDefinition(nomeArquivo, rep, tipo = 'arquivo') {
       ],
     }),
     content: [
-      // Cabeçalho
       { columns: [
         { width: 55, table: { body: [[{ text: 'LA', color: 'white', bold: true, fontSize: 22, alignment: 'center', fillColor: '#1e3a8a', margin: [0, 8, 0, 8] }]] }, layout: 'noBorders' },
         { width: '*', stack: [
@@ -1125,7 +1173,6 @@ function _buildDocDefinition(nomeArquivo, rep, tipo = 'arquivo') {
       { text: nomeArquivo, fontSize: 9, alignment: 'center', color: '#64748b', margin: [0, 0, 0, 2] },
       { text: dataFmt, fontSize: 8.5, alignment: 'center', color: '#94a3b8', margin: [0, 0, 0, 16] },
 
-      // Ficha técnica
       { table: { widths: ['30%', '70%'], body: [
         [{ text: 'Processo', style: 'ml' }, { text: id.processo || '—', style: 'mv' }],
         [{ text: 'Modalidade', style: 'ml' }, { text: id.modalidade || '—', style: 'mv' }],
@@ -1150,13 +1197,11 @@ function _buildDocDefinition(nomeArquivo, rep, tipo = 'arquivo') {
         paddingTop: () => 7, paddingBottom: () => 7, paddingLeft: () => 10, paddingRight: () => 10,
       }, margin: [0, 0, 0, 16] },
 
-      // Parecer
       { table: { widths: ['*'], body: [[{ stack: [
         { text: 'PARECER', fontSize: 8, bold: true, color: '#64748b', characterSpacing: 0.5 },
         { text: parecerTexto, fontSize: 11, bold: true, color: cor, margin: [0, 4, 0, 4] },
       ], margin: [12, 12, 12, 12], fillColor: corParecer }]] }, layout: 'noBorders', margin: [0, 0, 0, 16] },
 
-      // Não conformidades
       { text: 'ACHADOS E NÃO CONFORMIDADES', style: 'st' },
       { table: {
         headerRows: 1, dontBreakRows: true,
@@ -1176,7 +1221,6 @@ function _buildDocDefinition(nomeArquivo, rep, tipo = 'arquivo') {
         paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 7, paddingRight: () => 7,
       }, margin: [0, 0, 0, 20] },
 
-      // Assinatura
       { table: { dontBreakRows: true, widths: ['*'], body: [[{ stack: [
         { text: ' ', margin: [0, 20, 0, 0] },
         { canvas: [{ type: 'line', x1: 130, y1: 0, x2: 385, y2: 0, lineWidth: 0.8, lineColor: '#334155' }] },
@@ -1211,7 +1255,6 @@ function exportarPDFProcesso(p) {
   if (!arquivosOk.length) { toast('Nenhum arquivo analisado.', 'error'); return; }
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
 
-  // Consolida: análise sobre o texto de todos os arquivos juntos
   const corpus = arquivosOk.map(a => `\n===== ${a.nomeArquivo} =====\n${a.texto}`).join('\n');
   const res = analisarTextoIndividual(corpus, {
     paramObjeto: els.paramObjeto.value,
@@ -1279,7 +1322,7 @@ function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '6.1.0',
+    versao: '6.2.0',
     exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id,
@@ -1480,7 +1523,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#2563eb;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v6.1 · Workspaces em abas · Cálculos calibrados'
+    '· v6.2 · Sidebar fixo · Cores dinâmicas · 30 verificações'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
