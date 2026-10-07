@@ -1,10 +1,11 @@
 /* ============================================================================
- * LicitaAudit · app.js — v3.0.3
+ * LicitaAudit · app.js — v3.0.4
  * ----------------------------------------------------------------------------
- * Correções da v3.0.3:
- *   • [B2_30] — só se aplica quando modalidade ativa é Dispensa de Licitação.
- *   • [B5_66] × [B5_67] — mutuamente exclusivas por classificarTipoPregao().
- *   • Campo "objeto" da identificação prioriza o texto extraído pelo regex.
+ * Correções da v3.0.4:
+ *   • [B2_27, B4_54, B4_56, B4_63] — só se aplicam quando a modalidade ativa
+ *     é Inexigibilidade de Licitação.
+ *   • [B2_31, B2_35] — só se aplicam quando a natureza é Obras/Engenharia.
+ *   • [B5_66] × [B5_67] — mutuamente exclusivas (bens vs serviços).
  * ========================================================================== */
 'use strict';
 
@@ -267,6 +268,17 @@ function detectarMarcaDireta(corpus) {
   return null;
 }
 
+/** ⭐ v3.0.4 — Helpers de condicionalidade de modalidade/natureza */
+function isInexigibilidade(c) {
+  return /inexigibilidade/i.test(c?.modalidade?.modalidade || '');
+}
+function isObraEngenharia(c) {
+  return /obras?\s+e\s+servi[cç]os\s+de\s+engenharia/i.test(c?.natureza || '');
+}
+function isPregaoEletronico(c) {
+  return /preg[aã]o\s+eletr[ôo]nico/i.test(c?.modalidade?.modalidade || '');
+}
+
 function classificarNatureza(corpus, forcarNatureza = 'auto') {
   if (forcarNatureza && forcarNatureza !== 'auto') {
     const mapa = {
@@ -291,10 +303,6 @@ function classificarNatureza(corpus, forcarNatureza = 'auto') {
   return 'Bens e serviços comuns';
 }
 
-/**
- * ⭐ v3.0.3 — Classifica o objeto como 'bens' ou 'servicos' para
- * desambiguar B5_66 (8 dias — bens) × B5_67 (10 dias — serviços).
- */
 function classificarTipoPregao(meta) {
   const texto = [
     meta?.objeto?.texto || '',
@@ -489,7 +497,7 @@ const RX = {
   aprov:/(aprovad[oa]\s+pela\s+autoridade|aprova[cç][aã]o\s+pr[eé]via|despacho\s+de\s+aprova)/i,
   fin:  /(finalidade\s+institucional|miss[aã]o\s+do\s+[óo]rg[ãa]o|compet[êe]ncia\s+institucional)/i,
   painel:/(painel\s+de\s+pre[cç]os)/i,
-  simil:/(contrata[cç][õo]es\s+similares|outros\s+[óo]rg[ãa]os)/i,
+  simil:/(contrata[cç][ões]\s+similares|outros\s+[óo]rg[ãa]os)/i,
   midia:/(m[ií]dia\s+especializada|fornecedores?\s+do\s+ramo|pesquisa\s+direta)/i,
   unico:/(fornecedor\s+[uú]nico|or[cç]amento\s+[uú]nico)/i,
   justp:/(notas?\s+fiscais?|contratos?\s+anterior|pre[cç]os?\s+praticad)/i,
@@ -594,29 +602,54 @@ const MATRIZ_100_VERIFICACOES = [
   { id:'B2_24', bloco:2, nome:'Vedação de cotação com fornecedor único', fundamento:'Art. 23, §1º', severidade:'MEDIA', test:c=>!RX.unico.test(c.corpus), mensagemFalha:'Possível cotação com fornecedor único.', recomendacao:'Ampliar fontes — cotação única é indício de restrição.' },
   { id:'B2_25', bloco:2, nome:'Expurgo de valores inexequíveis', fundamento:'Art. 23, §2º', severidade:'MEDIA', test:c=>!/(valor\s+discrepante|inexequ[íi]vel)/i.test(c.corpus) || /expurgo|desconsiderad/i.test(c.corpus), mensagemFalha:'Sem análise de valores discrepantes.', recomendacao:'Desconsiderar valores discrepantes e registrar o expurgo.' },
   { id:'B2_26', bloco:2, nome:'Memória detalhada do cálculo', fundamento:'Art. 23, §1º', severidade:'MEDIA', test:c=>RX.mem.test(c.corpus), mensagemFalha:'Memória detalhada ausente.', recomendacao:'Apresentar planilha com metodologia do cálculo.' },
-  { id:'B2_27', bloco:2, nome:'Justificativa de preços na Inexigibilidade', fundamento:'Art. 74, §2º', severidade:'MEDIA', test:c=>!KB.inexigibilidade.test(c.corpus) || RX.justp.test(c.corpus), mensagemFalha:'Inexigibilidade sem justificativa de preço.', recomendacao:'Juntar notas fiscais ou contratos anteriores (Art. 74, §2º).' },
+
+  /* ⭐ B2_27 — v3.0.4: SÓ se aplica em Inexigibilidade */
+  { id:'B2_27', bloco:2, nome:'Justificativa de preços na Inexigibilidade',
+    fundamento:'Art. 74, §2º — Lei 14.133/2021', severidade:'MEDIA',
+    test: c => {
+      if (!isInexigibilidade(c)) return true;  // N/A em Pregão/Concorrência/Dispensa
+      return RX.justp.test(c.corpus);
+    },
+    mensagemFalha:'Inexigibilidade sem justificativa de preço (notas fiscais/contratos anteriores).',
+    recomendacao:'Juntar notas fiscais ou contratos anteriores (Art. 74, §2º).' },
+
   { id:'B2_28', bloco:2, nome:'Indicação da dotação orçamentária', fundamento:'Art. 18, §1º, V', severidade:'CRITICA', test:c=>RX.dot.test(c.corpus), mensagemFalha:'Dotação orçamentária não indicada.', recomendacao:'Indicar dotação, programa de trabalho e natureza de despesa.' },
   { id:'B2_29', bloco:2, nome:'Adequação orçamentária (LRF/LDO)', fundamento:'Art. 150', severidade:'MEDIA', test:c=>RX.lrf.test(c.corpus), mensagemFalha:'Sem declaração de adequação com LRF/LDO.', recomendacao:'Declarar adequação orçamentária e financeira.' },
-
-  /* ⭐ B2_30 — v3.0.3: só se aplica quando modalidade ativa é Dispensa de Licitação */
   { id:'B2_30', bloco:2, nome:'Limite R$ 50.000 (Dispensa — bens/serviços)',
     fundamento:'Art. 75, II — Lei 14.133/2021', severidade:'CRITICA',
     test: c => {
       const modalidadeAtiva = c.modalidade?.modalidade || '';
-      const eDispensa = /dispensa/i.test(modalidadeAtiva);
-      if (!eDispensa) return true;                   // N/A → conforme
-      if (KB.obra.test(c.corpus)) return true;       // obras seguem Art. 75, I
+      if (!/dispensa/i.test(modalidadeAtiva)) return true;
+      if (KB.obra.test(c.corpus)) return true;
       if (c.meta.valor > 0 && c.meta.valor <= 50000) return true;
       return false;
     },
     mensagemFalha:'Dispensa por valor acima de R$ 50.000 (ou sem valor) para bens/serviços.',
-    recomendacao:'Reclassificar a modalidade (Pregão/Concorrência) ou revisar o valor (Art. 75, II).' },
+    recomendacao:'Reclassificar a modalidade ou revisar o valor (Art. 75, II).' },
 
-  { id:'B2_31', bloco:2, nome:'Limite R$ 100.000 (obras/engenharia)', fundamento:'Art. 75, I', severidade:'CRITICA', test:c=>!KB.obra.test(c.corpus) || c.meta.valor<=100000, mensagemFalha:'Obras acima de R$ 100.000.', recomendacao:'Adotar Concorrência.' },
+  /* ⭐ B2_31 — v3.0.4: SÓ se aplica quando natureza é Obras/Engenharia */
+  { id:'B2_31', bloco:2, nome:'Limite R$ 100.000 (obras/engenharia)',
+    fundamento:'Art. 75, I — Lei 14.133/2021', severidade:'CRITICA',
+    test: c => {
+      if (!isObraEngenharia(c)) return true;   // N/A em Bens/Equipamentos/TIC/Serviços
+      return c.meta.valor <= 100000;
+    },
+    mensagemFalha:'Obras acima de R$ 100.000.',
+    recomendacao:'Adotar Concorrência.' },
+
   { id:'B2_32', bloco:2, nome:'Alerta de fracionamento de despesa', fundamento:'Art. 75, §1º', severidade:'CRITICA', test:c=>!RX.frac.test(c.corpus), mensagemFalha:'Indício de fracionamento de despesa.', recomendacao:'Apurar somatório de dispensas no mesmo exercício.' },
   { id:'B2_33', bloco:2, nome:'Atualização dos limites por decreto', fundamento:'Art. 182', severidade:'BAIXA', test:c=>/decreto\s+de\s+atualiza|atualiza[cç][aã]o\s+anual/i.test(c.corpus), mensagemFalha:'Sem menção à atualização anual.', recomendacao:'Consultar decreto vigente de atualização.' },
   { id:'B2_34', bloco:2, nome:'Orçamentos recentes (< 6 meses)', fundamento:'Art. 23, §1º', severidade:'BAIXA', test:c=>/data\s+de\s+emiss[aã]o|recente|6\s+meses/i.test(c.corpus) || !firstMatch(c.corpus, KB.orcamento), mensagemFalha:'Orçamentos possivelmente desatualizados.', recomendacao:'Utilizar cotações emitidas há menos de 6 meses.' },
-  { id:'B2_35', bloco:2, nome:'Compatibilidade com SINAPI/SICRO', fundamento:'Art. 23, §2º', severidade:'MEDIA', test:c=>!KB.obra.test(c.corpus) || RX.sinapi.test(c.corpus), mensagemFalha:'Obras sem referência a SINAPI/SICRO.', recomendacao:'Comprovar compatibilidade com SINAPI/SICRO.' },
+
+  /* ⭐ B2_35 — v3.0.4: SÓ se aplica quando natureza é Obras/Engenharia */
+  { id:'B2_35', bloco:2, nome:'Compatibilidade com SINAPI/SICRO',
+    fundamento:'Art. 23, §2º — Lei 14.133/2021', severidade:'MEDIA',
+    test: c => {
+      if (!isObraEngenharia(c)) return true;   // N/A em Bens/Equipamentos/TIC/Serviços
+      return RX.sinapi.test(c.corpus);
+    },
+    mensagemFalha:'Obras sem referência a SINAPI/SICRO.',
+    recomendacao:'Comprovar compatibilidade com SINAPI/SICRO.' },
 
   /* BLOCO 3 — Vedações, Competitividade e Integridade (15) */
   { id:'B3_36', bloco:3, nome:'Ausência de marca sem justificativa', fundamento:'Art. 41, I', severidade:'CRITICA', test:c=>!RX.marca.test(c.corpus) || RX.padron.test(c.corpus), mensagemFalha:'Indicação de marca sem justificativa.', recomendacao:'Justificar tecnicamente ou retirar a marca.' },
@@ -658,41 +691,70 @@ const MATRIZ_100_VERIFICACOES = [
     mensagemFalha:'Concorrência para objeto incompatível.',
     recomendacao:'Reavaliar — obras/técnicos exigem Concorrência.' },
   { id:'B4_53', bloco:4, nome:'Leilão exclusivo para alienação', fundamento:'Art. 31', severidade:'CRITICA', test:c=>c.modalidade.modalidade!=='Leilão Eletrônico' || /aliena|inserv[íi]vel|desfazimento/i.test(c.corpus), mensagemFalha:'Leilão para objeto não alienação.', recomendacao:'Leilão restrito à alienação.' },
-  { id:'B4_54', bloco:4, nome:'Inviabilidade caracterizada (Inexigibilidade)', fundamento:'Art. 74', severidade:'CRITICA', test:c=>!KB.inexigibilidade.test(c.corpus) || /inviabilidade\s+de\s+competi|exclusividade|not[oó]ria/i.test(c.corpus), mensagemFalha:'Inexigibilidade sem caracterização.', recomendacao:'Instruir com documentos da inviabilidade.' },
+
+  /* ⭐ B4_54 — v3.0.4: SÓ se aplica em Inexigibilidade */
+  { id:'B4_54', bloco:4, nome:'Inviabilidade caracterizada (Inexigibilidade)',
+    fundamento:'Art. 74 — Lei 14.133/2021', severidade:'CRITICA',
+    test: c => {
+      if (!isInexigibilidade(c)) return true;  // N/A em Pregão/Concorrência/Dispensa
+      return /inviabilidade\s+de\s+competi|exclusividade|not[oó]ria/i.test(c.corpus);
+    },
+    mensagemFalha:'Inexigibilidade sem caracterização da inviabilidade de competição.',
+    recomendacao:'Instruir com documentos da inviabilidade.' },
+
   { id:'B4_55', bloco:4, nome:'Notória especialização comprovada', fundamento:'Art. 74, III', severidade:'MEDIA', test:c=>!/not[oó]ria\s+especializa/i.test(c.corpus) || /produ[cç][aã]o\s+acad[êe]mica|pr[eê]mio|publica/i.test(c.corpus), mensagemFalha:'Notória especialização sem comprovação.', recomendacao:'Anexar produção acadêmica ou prêmios.' },
-  { id:'B4_56', bloco:4, nome:'Exclusividade atestada', fundamento:'Art. 74, I', severidade:'MEDIA', test:c=>!/fornecedor\s+exclusivo|representante\s+exclusivo/i.test(c.corpus) || /atestado\s+de\s+sindicato|carta\s+de\s+exclusividade/i.test(c.corpus), mensagemFalha:'Exclusividade sem atestado.', recomendacao:'Exigir atestado de sindicato ou órgão oficial.' },
+
+  /* ⭐ B4_56 — v3.0.4: SÓ se aplica em Inexigibilidade */
+  { id:'B4_56', bloco:4, nome:'Exclusividade atestada',
+    fundamento:'Art. 74, I — Lei 14.133/2021', severidade:'MEDIA',
+    test: c => {
+      if (!isInexigibilidade(c)) return true;  // N/A em Pregão/Concorrência/Dispensa
+      if (!/fornecedor\s+exclusivo|representante\s+exclusivo/i.test(c.corpus)) return true;
+      return /atestado\s+de\s+sindicato|carta\s+de\s+exclusividade/i.test(c.corpus);
+    },
+    mensagemFalha:'Exclusividade declarada sem atestado de sindicato/órgão oficial.',
+    recomendacao:'Exigir atestado de sindicato ou órgão oficial.' },
+
   { id:'B4_57', bloco:4, nome:'Emergência caracterizada', fundamento:'Art. 75, VIII', severidade:'CRITICA', test:c=>!KB.emergencia.test(c.corpus) || /risco\s+iminente|paralisa|desabastecimento/i.test(c.corpus), mensagemFalha:'Emergência sem risco iminente.', recomendacao:'Caracterizar objetivamente o risco.' },
   { id:'B4_58', bloco:4, nome:'Prazo máximo de 1 ano (emergencial)', fundamento:'Art. 75, §1º', severidade:'CRITICA', test:c=>!KB.emergencia.test(c.corpus) || /1\s+ano|12\s+meses|sem\s+prorroga/i.test(c.corpus), mensagemFalha:'Contrato emergencial sem prazo máximo de 1 ano.', recomendacao:'Fixar prazo de até 1 ano, vedada prorrogação.' },
   { id:'B4_59', bloco:4, nome:'Critério Menor Preço/Desconto', fundamento:'Art. 33', severidade:'MEDIA', test:c=>/menor\s+pre[cç]o|maior\s+desconto/i.test(c.corpus) || c.criterio !== 'indefinido', mensagemFalha:'Critério de julgamento não declarado.', recomendacao:'Declarar critério entre os do Art. 33.' },
   { id:'B4_60', bloco:4, nome:'Fundamentação de Técnica e Preço', fundamento:'Art. 36', severidade:'MEDIA', test:c=>!/t[eé]cnica\s+e\s+pre[cç]o/i.test(c.corpus) || /justificativa\s+t[eé]cnica|complexidade|natureza\s+intelectual/i.test(c.corpus), mensagemFalha:'Técnica e Preço sem justificativa.', recomendacao:'Motivar adoção de Técnica e Preço.' },
   { id:'B4_61', bloco:4, nome:'SRP quando cabível', fundamento:'Art. 82', severidade:'BAIXA', test:c=>RX.srp.test(c.corpus) || !/entrega\s+parcelada|demanda\s+recorrente/i.test(c.corpus), mensagemFalha:'SRP não avaliado.', recomendacao:'Avaliar SRP para demanda recorrente.' },
   { id:'B4_62', bloco:4, nome:'Justificativa para deserta/fracassada', fundamento:'Art. 75, III', severidade:'MEDIA', test:c=>!RX.desert.test(c.corpus) || /justificativa|nova\s+tentativa/i.test(c.corpus), mensagemFalha:'Deserta/fracassada sem justificativa.', recomendacao:'Justificar contratação direta após licitação deserta.' },
-  { id:'B4_63', bloco:4, nome:'Justificativa de preço e escolha', fundamento:'Art. 72, VI e VII', severidade:'MEDIA', test:c=>(!KB.inexigibilidade.test(c.corpus) && !KB.emergencia.test(c.corpus)) || RX.justcd.test(c.corpus), mensagemFalha:'Contratação direta sem justificativa.', recomendacao:'Motivar preço e escolha do fornecedor.' },
+
+  /* ⭐ B4_63 — v3.0.4: SÓ se aplica em Inexigibilidade */
+  { id:'B4_63', bloco:4, nome:'Justificativa de preço e escolha do fornecedor',
+    fundamento:'Art. 72, VI e VII — Lei 14.133/2021', severidade:'MEDIA',
+    test: c => {
+      if (!isInexigibilidade(c)) return true;  // N/A em Pregão/Concorrência/Dispensa
+      return RX.justcd.test(c.corpus);
+    },
+    mensagemFalha:'Inexigibilidade sem justificativa de preço e escolha do fornecedor.',
+    recomendacao:'Motivar preço e escolha do fornecedor (Art. 72, VI/VII).' },
+
   { id:'B4_64', bloco:4, nome:'Credenciamento / pré-qualificação', fundamento:'Art. 78', severidade:'BAIXA', test:c=>RX.cred.test(c.corpus) || !/m[úu]ltiplos\s+fornecedores|todos\s+aptos/i.test(c.corpus), mensagemFalha:'Credenciamento não avaliado.', recomendacao:'Avaliar credenciamento (Art. 78).' },
   { id:'B4_65', bloco:4, nome:'Natureza TIC validada', fundamento:'Art. 6º, XLI', severidade:'MEDIA', test:c=>!KB.tic.test(c.corpus) || /IN\s*\d+|GOV\.?\s*TI|LGPD|seguran[cç]a\s+da\s+informa/i.test(c.corpus), mensagemFalha:'TIC sem normas específicas.', recomendacao:'Referenciar normas GOV-TIC e LGPD.' },
 
   /* BLOCO 5 — Prazos, Edital, Publicação e Recursos (15) */
 
-  /* ⭐ B5_66 — v3.0.3: 8 dias úteis — APENAS bens em Pregão Eletrônico */
+  /* ⭐ B5_66 — APENAS bens em Pregão Eletrônico */
   { id:'B5_66', bloco:5, nome:'Prazo mínimo de 8 dias úteis (Pregão — bens)',
     fundamento:'Art. 55, I, "a" — Lei 14.133/2021', severidade:'CRITICA',
     test: c => {
-      const modalidadeAtiva = c.modalidade?.modalidade || '';
-      if (!/preg[aã]o\s+eletr[ôo]nico/i.test(modalidadeAtiva)) return true; // N/A
-      if (c.meta?.tipoPregao !== 'bens') return true;                       // N/A (não é bens)
+      if (!isPregaoEletronico(c)) return true;
+      if (c.meta?.tipoPregao !== 'bens') return true;
       if (RX.p8.test(c.corpus)) return true;
       return /(8\s+dias|oito\s+dias|≥\s*8|pelo\s+menos\s+8)/i.test(c.corpus);
     },
     mensagemFalha:'Pregão Eletrônico de bens sem prazo mínimo de 8 dias úteis.',
     recomendacao:'Fixar prazo mínimo de 8 dias úteis (Art. 55, I, "a").' },
 
-  /* ⭐ B5_67 — v3.0.3: 10 dias úteis — APENAS serviços em Pregão Eletrônico */
+  /* ⭐ B5_67 — APENAS serviços em Pregão Eletrônico */
   { id:'B5_67', bloco:5, nome:'Prazo mínimo de 10 dias úteis (Pregão — serviços)',
     fundamento:'Art. 55, I, "b" — Lei 14.133/2021', severidade:'CRITICA',
     test: c => {
-      const modalidadeAtiva = c.modalidade?.modalidade || '';
-      if (!/preg[aã]o\s+eletr[ôo]nico/i.test(modalidadeAtiva)) return true; // N/A
-      if (c.meta?.tipoPregao !== 'servicos') return true;                    // N/A (não é serviços)
+      if (!isPregaoEletronico(c)) return true;
+      if (c.meta?.tipoPregao !== 'servicos') return true;
       if (RX.p10.test(c.corpus)) return true;
       return /(10\s+dias|dez\s+dias|≥\s*10|pelo\s+menos\s+10)/i.test(c.corpus);
     },
@@ -847,7 +909,6 @@ function runAudit() {
 
   const criterio = els.paramCriterio.value !== 'auto' ? els.paramCriterio.value : detectarCriterio(corpus);
 
-  // ⭐ Determina 'bens' ou 'servicos' para desambiguar B5_66 × B5_67
   const tipoPregao = classificarTipoPregao({ ...meta, natureza });
 
   const metaFull = {
@@ -870,7 +931,6 @@ function runAudit() {
 
   const dataGeracao = new Date();
 
-  // ⭐ Objeto prioriza o TEXTO extraído sobre o rótulo genérico
   const objetoExibicao = (
     metaFull.objeto.texto && metaFull.objeto.texto.trim().length >= 5
       ? metaFull.objeto.texto.trim().slice(0, 200)
@@ -887,10 +947,10 @@ function runAudit() {
       porBloco: stats.porBloco,
     },
     identificacao: {
-      objeto:      objetoExibicao,            // ⭐ texto extraído (ou tipo se vazio)
-      objetoTipo:  metaFull.objeto.tipo,      // rótulo curto
-      objetoField: metaFull.objeto.texto,     // texto bruto extraído pelo regex
-      tipoPregao:  metaFull.tipoPregao,       // 'bens' | 'servicos'
+      objeto:      objetoExibicao,
+      objetoTipo:  metaFull.objeto.tipo,
+      objetoField: metaFull.objeto.texto,
+      tipoPregao:  metaFull.tipoPregao,
       modalidade:  metaFull.modalidade,
       natureza:    metaFull.natureza,
       criterio,
@@ -1036,7 +1096,6 @@ function renderReport(rep) {
       </div>
     </section>`;
 
-  /* ⭐ Ficha técnica — mostra texto extraído + classificação */
   const ficha = `
     <section class="card">
       <h3 class="card__title">Ficha Técnica do Processo</h3>
@@ -1066,7 +1125,7 @@ function renderReport(rep) {
 
   els.report.innerHTML = `${alerta}${dashboard}${ficha}${matriz}
     <footer class="report-footer">
-      <span>Relatório nº ${escapeHtml(meta.numeroRelatorio)} · LicitaAudit v3.0.3 · Lei nº 14.133/2021</span>
+      <span>Relatório nº ${escapeHtml(meta.numeroRelatorio)} · LicitaAudit v3.0.4 · Lei nº 14.133/2021</span>
       <span>${rep.estatisticas.total} verificações executadas</span>
     </footer>`;
 
@@ -1532,7 +1591,7 @@ function exportarPDF() {
  * ======================================================================== */
 function exportJson() {
   if (!state.report) return;
-  const payload = { ferramenta: 'LicitaAudit', versao: '3.0.3', baseNormativa: 'Lei nº 14.133/2021', ...state.report };
+  const payload = { ferramenta: 'LicitaAudit', versao: '3.0.4', baseNormativa: 'Lei nº 14.133/2021', ...state.report };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1584,7 +1643,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#5b8cff;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v3.0.3 · 100 verificações · B2_30 condicional · B5_66/67 mutuamente exclusivas · objeto priorizado'
+    '· v3.0.4 · 100 verificações · isenções condicionais por modalidade/natureza'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
