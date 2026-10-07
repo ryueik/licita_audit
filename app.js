@@ -1,12 +1,15 @@
 /* ============================================================================
  * LicitaAudit · app.js
  * ----------------------------------------------------------------------------
- * v1.2.0 — Correções:
- *   • Análise ISOLADA POR LINHA (evita contaminação entre requisitos no mesmo
- *     parágrafo/bloco). Ex.: "ETP [x] TR - Ausente" não contamina mais o ETP.
- *   • Suporte a marcadores de checkbox "[ ]" (ausente) e "[x]" (presente).
+ * v1.3.0 — Correções acumuladas:
+ *   • Análise ISOLADA POR LINHA (evita contaminação entre requisitos).
+ *   • Suporte a marcadores [x] (presente) e [ ] (ausente).
  *   • Requisito não mencionado em nenhuma linha → status "Atenção".
- *   • Extração robusta dos campos "Modalidade:" e "Objeto:" via regex.
+ *   • Avaliação AUTORITATIVA com termo principal (TR, ETP, Matriz etc.):
+ *     se a linha do termo completo indicar ausência, o status é DANGER
+ *     forçado, ignorando menções fracas (ex.: "art. 40" no rodapé).
+ *   • Captura MULTILINHA e flexível do campo "Objeto:" com lookahead de seções.
+ *   • Classificação expandida de objeto (TI, apoio administrativo, manutenção).
  *   • Validação jurídica Objeto × Modalidade (Art. 6º, XLI · Art. 28 a 32).
  *   • Truncamento de nome de arquivo preservando a extensão.
  * ========================================================================== */
@@ -102,12 +105,12 @@ function truncateFileName(name, maxBase = 30) {
 }
 
 /* ==========================================================================
- * 3. ANÁLISE ISOLADA POR LINHA (NÚCLEO DA CORREÇÃO)
+ * 3. ANÁLISE ISOLADA POR LINHA
  * --------------------------------------------------------------------------
  * Estratégia:
  *   1) Quebrar o corpus em LINHAS não vazias.
  *   2) Para cada requisito, encontrar linhas que mencionam o termo.
- *   3) Avaliar APENAS a linha do requisito (isolamento).
+ *   3) Avaliar APENAS a linha do requisito (isolamento vertical).
  *   4) Priorizar marcadores explícitos: [x] = conforme, [ ] = ausente.
  *   5) Caso contrário, usar marcadores textuais de ausência na MESMA linha.
  *   6) Nenhuma menção → status "Atenção" (não encontrado).
@@ -137,13 +140,10 @@ const POSITIVE_MARKERS = [
   'incluido', 'incluida', 'consta', 'constam',
   'localizado', 'localizada', 'encontrado', 'encontrada',
   'elaborado', 'elaborada', 'apresentado', 'apresentada',
-  'aprovado', 'aprovada', 'conforme', 'ok', 'sim',
+  'aprovado', 'aprovada', 'conforme', 'ok',
 ];
 
-/**
- * Divide o corpus em linhas limpas (ignora vazias e cabeçalhos de arquivo).
- * Também retorna a linha do corpus ORIGINAL para citações precisas.
- */
+/** Divide o corpus em linhas limpas (ignora vazias e cabeçalhos de arquivo). */
 function splitLines(corpus) {
   return corpus
     .split(/\r?\n/)
@@ -156,73 +156,47 @@ function splitLines(corpus) {
     .filter((l) => l.trimmed.length > 0 && !/^={3,}/.test(l.trimmed));
 }
 
-/**
- * Analisa UMA linha em busca de marcador de checkbox.
- *   [x] / [X] → presente
- *   [ ]       → ausente
- */
+/** Detecta marcador de checkbox na linha. */
 function detectCheckbox(line) {
   if (/\[\s*[xX]\s*\]/.test(line)) return 'checked';
   if (/\[\s*\]/.test(line))       return 'unchecked';
   return null;
 }
 
-/**
- * Verifica se o texto da linha contém um termo (normalizado).
- * Retorna o índice da ocorrência no texto cru ou -1.
- */
+/** Verifica se a linha contém um termo (normalizado). */
 function lineContainsTerm(line, term) {
   return normalize(line).includes(normalize(term));
 }
 
-/**
- * Classifica uma linha que menciona um requisito.
- * Retorna: 'ok' | 'danger' | null (quando não conclusivo).
- */
+/** Classifica uma linha que menciona um requisito. */
 function classifyRequirementLine(lineRaw, lineNorm) {
-  // 1) Checkbox tem precedência absoluta
   const checkbox = detectCheckbox(lineRaw);
   if (checkbox === 'checked')   return { status: 'ok',     reason: 'Marcado como [x]' };
   if (checkbox === 'unchecked') return { status: 'danger', reason: 'Marcado como [ ]' };
 
-  // 2) Marcadores textuais NA MESMA LINHA
   const hasNeg = NEGATIVE_MARKERS.some((m) => lineNorm.includes(normalize(m)));
   const hasPos = POSITIVE_MARKERS.some((m) => lineNorm.includes(normalize(m)));
 
   if (hasNeg && !hasPos) return { status: 'danger', reason: 'Termo de ausência na linha' };
   if (hasPos && !hasNeg) return { status: 'ok',     reason: 'Termo de presença na linha' };
   if (hasPos && hasNeg)  return { status: 'warn',   reason: 'Linha contém termos positivos e negativos' };
-
-  // 3) Sem marcadores explícitos — só a menção do requisito conta como presença
   return { status: 'ok', reason: 'Requisito mencionado sem termos negativos' };
 }
 
 /**
- * ⭐ FUNÇÃO CENTRAL: avalia a presença de um requisito por LINHA.
- *
- * Regras:
- *   - Se a linha tem [x] ou termo positivo → CONFORME
- *   - Se a linha tem [ ] ou termo negativo → NÃO CONFORME
- *   - Se o requisito é mencionado mas a linha é ambígua → ATENÇÃO
- *   - Se NÃO há menção em nenhuma linha → ATENÇÃO (não encontrado)
- *
- * @param {Array} lines  Linhas do corpus (resultado de splitLines)
- * @param {Array<string>} terms  Termos/aliases do requisito
- * @returns {{status:string, line:object|null, snippet:string|null, term:string|null, reason:string}}
+ * Avaliação simples por linha (usada como fallback para termos fracos).
  */
 function evalRequirementByLine(lines, terms) {
-  // 1) Encontra todas as linhas que mencionam o requisito
   const matches = [];
   for (const line of lines) {
     for (const term of terms) {
       if (lineContainsTerm(line.raw, term)) {
         matches.push({ line, term });
-        break; // uma ocorrência por linha basta
+        break;
       }
     }
   }
 
-  // 2) Nenhuma linha menciona → ATENÇÃO
   if (matches.length === 0) {
     return {
       status: 'warn',
@@ -230,11 +204,10 @@ function evalRequirementByLine(lines, terms) {
       snippet: null,
       term: null,
       reason: 'Requisito não mencionado no documento',
+      authoritative: false,
     };
   }
 
-  // 3) Prioriza linhas com sinal explícito (checkbox ou termo positivo/negativo).
-  //    Ordem: [x] ou termo POSITIVO → [ ] ou termo NEGATIVO → ambíguas.
   const evaluated = matches.map(({ line, term }) => ({
     line,
     term,
@@ -243,7 +216,6 @@ function evalRequirementByLine(lines, terms) {
 
   const priority = { ok: 0, danger: 1, warn: 2 };
   evaluated.sort((a, b) => priority[a.status] - priority[b.status]);
-
   const chosen = evaluated[0];
 
   return {
@@ -252,6 +224,78 @@ function evalRequirementByLine(lines, terms) {
     snippet: chosen.line.trimmed.slice(0, 260),
     term: chosen.term,
     reason: chosen.reason,
+    authoritative: false,
+  };
+}
+
+/* ============================================================================
+ * v1.3.0 · Avaliação AUTORITATIVA com termo principal
+ * ----------------------------------------------------------------------------
+ * Regra de ouro: se a linha que contém o TERMO PRINCIPAL indicar ausência
+ * ("Ausente", "[ ]", "não consta"), o status é "danger" e nada o sobrepõe.
+ *
+ * Corrige o bug em que "contratação de serviços" no rodapé marcava o TR
+ * como "Conforme" mesmo havendo linha explícita:
+ *     "Termo de Referência (TR) - Ausente"
+ * ======================================================================== */
+function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = []) {
+  // ---------- 1) Linhas que contêm o TERMO PRINCIPAL ----------
+  const primaryMatches = [];
+  for (const line of lines) {
+    for (const term of primaryTerms) {
+      if (lineContainsTerm(line.raw, term)) {
+        primaryMatches.push({ line, term });
+        break;
+      }
+    }
+  }
+
+  if (primaryMatches.length) {
+    const evaluated = primaryMatches.map(({ line, term }) => ({
+      line,
+      term,
+      ...classifyRequirementLine(line.raw, line.normalized),
+    }));
+
+    // a) Ausência explícita → DANGER FORÇADO
+    const explicitDanger = evaluated.find((x) => x.status === 'danger');
+    if (explicitDanger) {
+      return {
+        status: 'danger',
+        line: explicitDanger.line,
+        snippet: explicitDanger.line.trimmed.slice(0, 260),
+        term: explicitDanger.term,
+        reason: `Linha autoritativa com ausência — ${explicitDanger.reason}`,
+        authoritative: true,
+      };
+    }
+
+    // b) Linha "ok" explícita tem preferência
+    const chosen = evaluated.find((x) => x.status === 'ok') || evaluated[0];
+    return {
+      status: chosen.status,
+      line: chosen.line,
+      snippet: chosen.line.trimmed.slice(0, 260),
+      term: chosen.term,
+      reason: chosen.reason,
+      authoritative: true,
+    };
+  }
+
+  // ---------- 2) Fallback — termos fracos ----------
+  if (fallbackTerms.length) {
+    const weak = evalRequirementByLine(lines, fallbackTerms);
+    return { ...weak, authoritative: false };
+  }
+
+  // ---------- 3) Requisito ausente do corpus ----------
+  return {
+    status: 'warn',
+    line: null,
+    snippet: null,
+    term: null,
+    reason: 'Requisito não mencionado no documento',
+    authoritative: false,
   };
 }
 
@@ -285,14 +329,47 @@ function extractModalidadeField(text) {
   ]);
 }
 
+/* ============================================================================
+ * v1.3.0 · Captura MULTILINHA e flexível do campo "Objeto"
+ * ----------------------------------------------------------------------------
+ * Aceita numeração ("1.", "1)"), separadores variados (":", "-", "–", "—"),
+ * captura por múltiplas linhas e para em qualquer seção conhecida.
+ * ======================================================================== */
 function extractObjetoField(text) {
-  return extractLabeledField(text, [
-    'identifica[cç][aã]o\\s+do\\s+objeto',
-    'objeto\\s+da\\s+contrata[cç][aã]o',
-    'objeto\\s+da\\s+licita[cç][aã]o',
-    'do\\s+objeto',
-    'objeto',
-  ]);
+  const LABEL = '(?:Identifica[cç][aã]o\\s+do\\s+Objeto|Objeto\\s+do\\s+Processo|Objeto\\s+da\\s+Contrata[cç][aã]o|Objeto)';
+  const NUM   = '(?:\\d+[\\.\\)]\\s*)?';
+  const SEP   = '[ \\t]*[:\\-–—][ \\t]*';
+  const STOP  = '(?:Modalidade|Checklist|Justificativa|Fundamenta[cç][aã]o|Dota[cç][aã]o|Estimativa|Crit[eé]rio|Prazo|Do\\s+Objeto|Da\\s+Contrata)';
+
+  const patterns = [
+    // 1) Bloco multilinha — para na próxima seção conhecida
+    new RegExp(
+      `(?:^|\\n)[ \\t]*${NUM}${LABEL}${SEP}\\n?[ \\t]*` +
+      `([\\s\\S]{2,800}?)` +
+      `(?=\\n[ \\t]*${NUM}${STOP}` +
+      `|\\n[ \\t]*\\n[ \\t]*\\n` +
+      `|\\n[ \\t]*${NUM}\\d+[\\.\\)]` +
+      `|$)`,
+      'i'
+    ),
+    // 2) Fallback — apenas a linha do rótulo
+    new RegExp(
+      `(?:^|\\n)[ \\t]*${NUM}${LABEL}${SEP}([^\\n\\r]{2,400})`,
+      'i'
+    ),
+  ];
+
+  for (const rx of patterns) {
+    const m = text.match(rx);
+    if (m) {
+      const value = m[1]
+        .replace(/\s+/g, ' ')
+        .replace(/^[\s\-–—:.,;]+|[\s\-–—:.,;]+$/g, '')
+        .trim();
+      if (value && value.length >= 2) return value.slice(0, 500);
+    }
+  }
+  return null;
 }
 
 function classifyModalidadeValue(value) {
@@ -308,32 +385,41 @@ function classifyModalidadeValue(value) {
   return null;
 }
 
+/* ============================================================================
+ * v1.3.0 · Classificação EXPANDIDA do objeto
+ * ----------------------------------------------------------------------------
+ * Cobre TI, apoio administrativo, manutenção, serviços gerais etc.
+ * ======================================================================== */
 function classifyObjetoValue(value) {
   if (!value) return null;
   const v = normalize(value);
 
-  if (/(alienacao|venda\s+de\s+bens|leilao\s+de\s+bens|bens\s+moveis?\s+inserviveis?|bens\s+imoveis?\s+da\s+administracao)/.test(v)) {
+  // 1) Alienação — prioridade máxima
+  if (/(alienacao|venda\s+de\s+bens|leilao\s+de\s+bens|bens\s+moveis?\s+inserviveis?|bens\s+imoveis?\s+da\s+administracao|desfazimento)/.test(v)) {
     return 'alienacao';
   }
-  if (/(obra|obras|engenharia|construcao|reforma|pavimentacao|edificacao|saneamento)/.test(v)) {
+  // 2) Obras / engenharia
+  if (/(obra|obras|engenharia|construcao|reforma|pavimentacao|edificacao|saneamento|terraplenagem)/.test(v)) {
     return 'obras';
   }
+  // 3) Trabalho técnico / científico / artístico
   if (/(trabalho\s+tecnico|trabalho\s+cientifico|trabalho\s+artistico|projeto\s+arquitetonico|conteudo\s+artistico)/.test(v)) {
     return 'intelectual';
   }
-  if (/(ti\b|tecnologia\s+da\s+informacao|software|sistema\s+informat|computador|notebook|servidor\s+de\s+rede|datacenter|nuvem|cloud|licencas?\s+de\s+software)/.test(v)) {
+  // 4) TI / Tecnologia da Informação → serviço ESPECIAL
+  if (/(\bti\b|tecnologia\s+da\s+informacao|informatica|software|sistema\s+informat|computador|notebook|servidor\s+de\s+rede|datacenter|nuvem|cloud|licencas?\s+de\s+software|hardware|suporte\s+tecnico\s+de\s+ti|help\s*desk|service\s*desk)/.test(v)) {
     return 'servicos-especiais';
   }
-  if (/(servico\s+comum|servicos\s+comuns|limpeza|conservacao|vigilancia|porteiro|apoio\s+administrativo|recepcionista|jardinagem)/.test(v)) {
+  // 5) Serviços comuns / apoio administrativo / manutenção
+  if (/(servico\s+comum|servicos\s+comuns|limpeza|conservacao|vigilancia|porteiro|apoio\s+administrativo|recepcionista|jardinagem|manutencao|manutencao\s+predial|manutencao\s+de\s+veiculos|motorista|copeira|servicos?\s+gerais|assistencia\s+administrativa|secretaria)/.test(v)) {
     return 'servicos-comuns';
   }
-  if (/(bens?\s+comuns?|material\s+de\s+escritorio|generos?\s+alimenticios?|mobiliario|papelaria|uniformes|medicamentos?)/.test(v)) {
+  // 6) Bens comuns
+  if (/(bens?\s+comuns?|material\s+de\s+escritorio|generos?\s+alimenticios?|mobiliario|papelaria|uniformes|medicamentos?|equipamentos?|aquisicao\s+de\s+bens|compra\s+de\s+bens)/.test(v)) {
     return 'bens';
   }
-  if (/(aquisicao\s+de\s+bens|compra\s+de\s+bens|aquisicao|compra)/.test(v)) {
-    return 'bens';
-  }
-  if (/(contratacao\s+de\s+servicos|prestacao\s+de\s+servicos|servicos)/.test(v)) {
+  // 7) Serviços genéricos (rede de segurança)
+  if (/(contratacao\s+de\s+servicos|prestacao\s+de\s+servicos|servicos?\s+de\s+\w+)/.test(v)) {
     return 'servicos-comuns';
   }
   return null;
@@ -394,7 +480,6 @@ async function extractPdf(file) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
 
-    // Reconstrói linhas usando as coordenadas Y para preservar a estrutura.
     const items = content.items
       .map((it) => ({ str: it.str, y: it.transform?.[5] ?? 0, x: it.transform?.[4] ?? 0 }))
       .filter((it) => it.str && it.str.trim());
@@ -412,7 +497,7 @@ async function extractPdf(file) {
       lastY = it.y;
     }
     if (lineBuf.length) parts.push(lineBuf.join(' '));
-    parts.push(''); // separador de página
+    parts.push('');
   }
   return parts.join('\n');
 }
@@ -524,54 +609,64 @@ function runAudit() {
   /* ---------- Checagens (todas por LINHA) ---------- */
   const checks = [];
 
-  // Helper para montar a mensagem de evidência
-  const buildEvidence = (result, fallbackReason) => {
-    if (result.status === 'warn' && !result.snippet) {
-      return fallbackReason;
-    }
-    const prefix = result.status === 'danger' ? '⚠️ '
-                 : result.status === 'warn'   ? '⚠️ '
+  // Helper de formatação da evidência
+  const fmtEvidence = (r, fallback) => {
+    if (!r.snippet) return fallback;
+    const prefix = r.status === 'danger' ? '⚠️ '
+                 : r.status === 'warn'   ? '⚠️ '
                  : '✓ ';
-    return `${prefix}${result.reason}: "${result.snippet}"`;
+    return `${prefix}${r.reason}: "${r.snippet}"`;
   };
 
-  // 1. ETP
+  // 1. ETP — autoritativo
   {
-    const r = evalRequirementByLine(lines, KB.etp);
+    const r = evalRequirementWithPrimaryTerm(
+      lines,
+      ['estudo tecnico preliminar', 'estudo técnico preliminar'],
+      ['etp', 'art. 18', 'artigo 18']
+    );
     checks.push({
       id: 'etp',
       requisito: 'Estudo Técnico Preliminar (ETP)',
       lei: 'Art. 18, §1º, I',
       status: r.status,
-      evidencia: buildEvidence(r, 'ETP não mencionado no corpus analisado.'),
+      evidencia: fmtEvidence(r, 'ETP não mencionado no corpus analisado.'),
       correcao: r.status === 'ok' ? null
         : 'Elaborar e anexar o Estudo Técnico Preliminar com descrição da necessidade, levantamento de mercado e definição da solução.',
     });
   }
 
-  // 2. TR / Projeto Básico
+  // 2. TR / Projeto Básico — autoritativo
   {
-    const r = evalRequirementByLine(lines, KB.tr);
+    const r = evalRequirementWithPrimaryTerm(
+      lines,
+      ['termo de referencia', 'termo de referência'],
+      ['projeto basico', 'projeto básico', 'anteprojeto', 'art. 40']
+    );
     checks.push({
       id: 'tr',
       requisito: 'Termo de Referência / Anteprojeto / Projeto Básico',
       lei: 'Art. 6º, XXIII e XXV · Art. 40',
       status: r.status,
-      evidencia: buildEvidence(r, 'Documento estruturante (TR / Projeto Básico) não mencionado.'),
+      evidencia: fmtEvidence(r, 'Documento estruturante (TR / Projeto Básico) não mencionado.'),
       correcao: r.status === 'ok' ? null
         : 'Anexar Termo de Referência (bens/serviços) ou Projeto Básico/Executivo (obras), conforme o objeto.',
     });
   }
 
-  // 3. Estimativa de valor
+  // 3. Estimativa de valor — autoritativo
   {
-    const r = evalRequirementByLine(lines, KB.orcamento);
+    const r = evalRequirementWithPrimaryTerm(
+      lines,
+      ['estimativa de valor', 'estimativa do valor', 'valor estimado'],
+      ['planilha orcamentaria', 'planilha orçamentária', 'pesquisa de precos', 'pesquisa de preços', 'art. 23']
+    );
     checks.push({
       id: 'orcamento',
       requisito: 'Estimativa do valor da contratação',
       lei: 'Art. 23',
       status: r.status,
-      evidencia: buildEvidence(r, 'Não há menção a valor estimado ou pesquisa de preços.'),
+      evidencia: fmtEvidence(r, 'Não há menção a valor estimado ou pesquisa de preços.'),
       correcao: r.status === 'ok' ? null
         : 'Elaborar estimativa de valor com base em pesquisa de preços (painel de preços, contratações similares, mídia especializada).',
     });
@@ -580,29 +675,32 @@ function runAudit() {
   // 4. Dotação orçamentária
   {
     const r = evalRequirementByLine(lines, KB.dotacao);
-    // Requisito opcional: eleva "não encontrado" de warn para warn (mantém)
     checks.push({
       id: 'dotacao',
       requisito: 'Adequação orçamentária e indicação de dotação',
       lei: 'Art. 150',
       status: r.status,
-      evidencia: buildEvidence(r, 'Não foi possível confirmar dotação orçamentária explícita.'),
+      evidencia: fmtEvidence(r, 'Não foi possível confirmar dotação orçamentária explícita.'),
       correcao: r.status === 'ok' ? null
         : 'Indicar a dotação orçamentária e o programa de trabalho que suportam a despesa.',
     });
   }
 
-  // 5. Matriz de Riscos
+  // 5. Matriz de Riscos — autoritativo
   {
-    const r = evalRequirementByLine(lines, KB.matrizRiscos);
+    const r = evalRequirementWithPrimaryTerm(
+      lines,
+      ['matriz de risco', 'matriz de riscos'],
+      ['gerenciamento de riscos', 'art. 22', 'art. 100']
+    );
     const isObraOuEspecial = ['obras', 'servicos-especiais'].includes(objeto);
-    const finalStatus = (r.status === 'warn' && isObraOuEspecial) ? 'danger' : r.status;
+    const finalStatus = (r.status === 'warn' && !r.snippet && isObraOuEspecial) ? 'danger' : r.status;
     checks.push({
       id: 'matriz',
       requisito: 'Matriz de Riscos',
       lei: 'Art. 22 · Art. 100',
       status: finalStatus,
-      evidencia: buildEvidence(r, isObraOuEspecial
+      evidencia: fmtEvidence(r, isObraOuEspecial
         ? 'Matriz de riscos não mencionada — obrigatória para obras/serviços especiais.'
         : 'Matriz de riscos não mencionada.'),
       correcao: r.status === 'ok' ? null
@@ -620,13 +718,13 @@ function runAudit() {
       requisito: 'Motivação e justificativa da contratação',
       lei: 'Art. 5º · Art. 18, §1º',
       status: r.status,
-      evidencia: buildEvidence(r, 'Não foi possível localizar seção de motivação.'),
+      evidencia: fmtEvidence(r, 'Não foi possível localizar seção de motivação.'),
       correcao: r.status === 'ok' ? null
         : 'Explicitar a motivação do ato e a justificativa da escolha da solução.',
     });
   }
 
-  // 7. Compatibilidade Objeto × Modalidade (validação legal reforçada)
+  // 7. Compatibilidade Objeto × Modalidade
   {
     const compat = checkModalidadeCompatibilidade(objeto, modalidade);
     let status = compat.ok ? 'ok' : 'danger';
@@ -684,7 +782,7 @@ function runAudit() {
       requisito: 'Prazos mínimos de divulgação do edital',
       lei: 'Art. 55',
       status: r.status,
-      evidencia: buildEvidence(r, 'Prazos não explicitados de forma clara.'),
+      evidencia: fmtEvidence(r, 'Prazos não explicitados de forma clara.'),
       correcao: r.status === 'ok' ? null
         : 'Explicitar os prazos mínimos conforme Art. 55, observando a modalidade e o critério de julgamento.',
     });
@@ -700,7 +798,7 @@ function runAudit() {
       status: r.status,
       evidencia: r.status === 'warn' && !r.snippet
         ? `Critério detectado: "${criterio}" (sem trecho explícito localizado).`
-        : buildEvidence(r, 'Critério de julgamento não mencionado.'),
+        : fmtEvidence(r, 'Critério de julgamento não mencionado.'),
       correcao: r.status === 'ok' ? null
         : 'Declarar expressamente o critério de julgamento adotado, entre os previstos no Art. 33.',
     });
@@ -713,7 +811,7 @@ function runAudit() {
       id: 'lei-antiga',
       requisito: 'Ausência de referências à Lei 8.666/93 (revogada)',
       lei: 'Art. 191 · Lei 14.133/2021',
-      status: r.status === 'ok' ? 'danger' : 'ok', // invertido: menção = ruim
+      status: r.snippet ? 'danger' : 'ok',
       evidencia: r.snippet
         ? `⚠️ Referência à Lei 8.666/93 detectada: "${r.snippet}"`
         : 'Nenhuma referência à Lei 8.666/93 encontrada.',
@@ -1078,7 +1176,7 @@ function exportJson() {
   if (!state.report) return;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '1.2.0',
+    versao: '1.3.0',
     baseNormativa: 'Lei nº 14.133/2021',
     ...state.report,
   };
@@ -1198,7 +1296,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#5b8cff;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v1.2.0 · Lei 14.133/2021 · análise por linha'
+    '· v1.3.0 · Lei 14.133/2021 · análise por linha + termos autoritativos'
   );
 }
 
