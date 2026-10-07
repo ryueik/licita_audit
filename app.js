@@ -367,25 +367,36 @@ const MATRIZ_CORE_30 = [
 
   /* ============ BLOCO 3 — VEDAÇÕES E COMPETITIVIDADE ============ */
   {
-    id:'B3_01', bloco:3, nome:'Ausência de direcionamento de marca',
-    fundamento:'Art. 41, I — Lei 14.133/2021', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
-      const marca = /\b(marca|modelo|fabricante)\s*[:\-]?\s*[A-ZÀ-Ú][\w-]+/i.test(c.corpus);
-      const padron = /(padroniza|carta\s+de\s+exclusividade|atestado\s+de\s+exclusividade)/i.test(c.corpus);
-      return !marca || padron;
-    },
-    mensagemFalha:'Indicação de marca sem justificativa técnica de padronização.',
-    recomendacao:'Apresentar justificativa de padronização OU retirar a indicação de marca.',
+  id:'B3_01', bloco:3, nome:'Ausência de direcionamento de marca',
+  fundamento:'Art. 41, I — Lei 14.133/2021', severidade:'CRITICA',
+  aplicavel: () => true,
+  test: c => {
+    // 1. Se há cláusula EXPLÍCITA de vedação → conforme
+    const vedacaoExplicita =
+      /(vedad[ao]\s+(a\s+)?indica[cç][aã]o\s+de\s+marca|vedad[ao]\s+(a\s+)?marca|sem\s+indica[cç][aã]o\s+de\s+marca|vedad[ao]\s+indica[cç][aã]o\s+de\s+marca\s*,?\s*modelo|n[aã]o\s+ser[aá]\s+admitid[ao]\s+(a\s+)?indica[cç][aã]o\s+de\s+marca)/i
+        .test(c.corpus);
+    if (vedacaoExplicita) return true;
+
+    // 2. Se há indicação de marca, exige justificativa de padronização
+    const temMarca = /\b(marca|modelo|fabricante)\s*[:\-]?\s*[A-ZÀ-Ú][\w-]+/i.test(c.corpus);
+    if (!temMarca) return true;
+
+    const temPadron =
+      /(padroniza|carta\s+de\s+exclusividade|atestado\s+de\s+exclusividade|justificativa\s+t[eé]cnica\s+de\s+padroniza)/i
+        .test(c.corpus);
+    return temPadron;
   },
+  mensagemFalha:'Indicação de marca sem cláusula de vedação explícita nem justificativa técnica de padronização.',
+  recomendacao:'Inserir cláusula "vedada a indicação de marca" OU apresentar justificativa de padronização (Art. 41, I).',
+},
   {
-    id:'B3_02', bloco:3, nome:'Vedação de participação de servidores',
-    fundamento:'Art. 14, I — Lei 14.133/2021', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(servidor\s+do\s+[óo]rg[ãa]o|impedimento\s+de\s+servidor|v[eé]dado\s+ao\s+servidor)/i.test(c.corpus),
-    mensagemFalha:'Cláusula de vedação a servidores ausente.',
-    recomendacao:'Incluir cláusula expressa vedando participação de servidores do órgão.',
-  },
+  id:'B3_02', bloco:3, nome:'Vedação de participação de servidores',
+  fundamento:'Art. 14, I — Lei 14.133/2021', severidade:'MEDIA',
+  aplicavel: () => true,
+  test: c => /(servidores?\s+do\s+[óo]rg[ãa]o|membros?\s+da\s+comiss[aã]o|art\.?\s*14,?\s*i\b|v[eé]dad[ao]\s+ao\s+servidor|impedimento\s+de\s+servidor)/i.test(c.corpus),
+  mensagemFalha:'Cláusula de vedação a servidores do órgão não identificada.',
+  recomendacao:'Incluir cláusula expressa vedando participação de servidores e membros da comissão (Art. 14, I).',
+},
   {
     id:'B3_03', bloco:3, nome:'Vedação a empresas suspensas (CEIS/CNEP)',
     fundamento:'Art. 14, III — Lei 14.133/2021', severidade:'MEDIA',
@@ -403,42 +414,65 @@ const MATRIZ_CORE_30 = [
     recomendacao:'Exigir declaração de não emprego de menores de 18 anos.',
   },
   {
-    id:'B3_05', bloco:3, nome:'Qualificação técnica proporcional e vistoria declaratória',
-    fundamento:'Art. 67 · Art. 63, § único — Lei 14.133/2021', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => {
-      const vistoria = /(vistoria|visita\s+t[eé]cnica)/i.test(c.corpus);
-      const declara  = /(declara[cç][aã]o\s+de\s+vistoria|dispensa\s+de\s+vistoria)/i.test(c.corpus);
-      const excesso  = /(exig[êe]ncia\s+excessiva|desproporcional)/i.test(c.corpus);
-      return !excesso && (!vistoria || declara);
-    },
-    mensagemFalha:'Exigência técnica excessiva OU vistoria sem alternativa declaratória.',
-    recomendacao:'Revisar requisitos técnicos e permitir declaração em substituição à vistoria.',
+  id:'B3_05', bloco:3, nome:'Qualificação técnica proporcional e vistoria declaratória',
+  fundamento:'Art. 67 · Art. 63, § único — Lei 14.133/2021', severidade:'MEDIA',
+  aplicavel: () => true,
+  test: c => {
+    // 1. Se há exigência técnica excessiva → reprova
+    const excesso = /(exig[êe]ncia\s+excessiva|desproporcional|afunilad[ao])/i.test(c.corpus);
+    if (excesso) return false;
+
+    // 2. Se não há vistoria obrigatória → conforme
+    const temVistoria = /(vistoria|visita\s+t[eé]cnica)/i.test(c.corpus);
+    if (!temVistoria) return true;
+
+    // 3. Se há vistoria, aceita: declaração formal, substituição OU art. 63
+    const temAlternativa =
+      /(declara[cç][aã]o\s+formal|substitui[cç][aã]o\s+d[aa]\s+vistoria|dispensa\s+de\s+vistoria|art\.?\s*63,?\s*§\s*[uú]nico|art\.?\s*63\s*par[aá]grafo\s+[uú]nico|em\s+substitui[cç][aã]o\s+[àa]\s+vistoria)/i
+        .test(c.corpus);
+    return temAlternativa;
   },
+  mensagemFalha:'Exigência técnica excessiva OU vistoria sem alternativa declaratória.',
+  recomendacao:'Revisar requisitos técnicos e permitir declaração formal em substituição à vistoria (Art. 63, § único).',
+},
 
   /* ============ BLOCO 4 — MODALIDADES E ENQUADRAMENTO ============ */
   {
-    id:'B4_01', bloco:4, nome:'Coerência entre modalidade e natureza do objeto',
-    fundamento:'Art. 6º, XLI · Art. 28 a 32 — Lei 14.133/2021', severidade:'CRITICA',
-    aplicavel: () => true,
-    test: c => {
-      const mod = (c.modalidade?.modalidade || '').toLowerCase();
-      const nat = (c.natureza || '').toLowerCase();
-      // Pregão só para bens/serviços comuns
-      if (mod.includes('pregão'))     return /bens|comuns|servic/.test(nat) || /aquisi[cç]/.test(nat);
-      // Concorrência para obras/técnicos/TIC
-      if (mod.includes('concorrência')) return /obra|engenharia|t[eé]cnic|tic|intelectual|especializ/.test(nat);
-      // Leilão só para alienação
-      if (mod.includes('leilão'))     return /aliena/.test(nat);
-      // Inexigibilidade - qualquer natureza tecnicamente
-      if (mod.includes('inexigibilidade')) return true;
-      // Dispensa - qualquer natureza
-      if (mod.includes('dispensa'))   return true;
-      return true;
-    },
-    mensagemFalha:'Modalidade incompatível com a natureza do objeto.',
-    recomendacao:'Reavaliar a modalidade à luz dos Arts. 6º, XLI e 28 a 32.',
+  id:'B4_01', bloco:4, nome:'Coerência entre modalidade e natureza do objeto',
+  fundamento:'Art. 6º, XLI · Art. 28 a 32 — Lei 14.133/2021', severidade:'CRITICA',
+  aplicavel: () => true,
+  test: c => {
+    const mod = (c.modalidade?.modalidade || '').toLowerCase();
+    const nat = (c.natureza || '').toLowerCase();
+    const obj = ((c.meta?.objeto?.texto || '') + ' ' + (c.meta?.objeto?.tipo || '')).toLowerCase();
+
+    // 🟢 PREGÃO ELETRÔNICO: aceita bens comuns, TIC, equipamentos, computadores
+    if (mod.includes('pregão')) {
+      const comum =
+        /bens|comuns|servi[cç]|aquisi[cç]|fornecimento|ti\b|tic\b|tecnologia\s+da\s+informa|equipament|computador|notebook|workstation|impressora|monitor|material|mobili/.test(nat) ||
+        /bens|comuns|ti\b|tic\b|equipament|computador|notebook|workstation|impressora|monitor|material|mobili|software|hardware/.test(obj);
+      return comum;
+    }
+
+    // 🟢 CONCORRÊNCIA: aceita obras, técnicos, TIC especial
+    if (mod.includes('concorrência')) {
+      return /obra|engenharia|t[eé]cnic|tic|intelectual|especializ|complexid/.test(nat) ||
+             /obra|engenharia|t[eé]cnic|intelectual|especializ|complexid/.test(obj);
+    }
+
+    // 🟢 LEILÃO: aceita alienação
+    if (mod.includes('leilão')) return /aliena|inserv[íi]vel|desfazimento/.test(nat) ||
+                                          /aliena|inserv[íi]vel|desfazimento/.test(obj);
+
+    // 🟢 INEXIGIBILIDADE / DISPENSA: qualquer natureza
+    if (mod.includes('inexigibilidade') || mod.includes('dispensa')) return true;
+
+    // 🟢 FALLBACK: qualquer outra modalidade — aceita
+    return true;
   },
+  mensagemFalha:'Modalidade incompatível com a natureza do objeto.',
+  recomendacao:'Reavaliar a modalidade à luz dos Arts. 6º, XLI e 28 a 32.',
+},
   {
     id:'B4_02', bloco:4, nome:'Inexigibilidade: inviabilidade de competição',
     fundamento:'Art. 74, I e III — Lei 14.133/2021', severidade:'CRITICA',
@@ -478,13 +512,13 @@ const MATRIZ_CORE_30 = [
 
   /* ============ BLOCO 5 — PRAZOS E PUBLICAÇÃO ============ */
   {
-    id:'B5_01', bloco:5, nome:'Prazo mínimo de 8 dias úteis (Pregão — bens)',
-    fundamento:'Art. 55, I, "a" — Lei 14.133/2021', severidade:'CRITICA',
-    aplicavel: c => /preg[aã]o/i.test(c.modalidade?.modalidade || '') && c.meta?.tipoObjeto === 'bens',
-    test: c => /(8\s+dias|oito\s+dias|≥\s*8|pelo\s+menos\s+8)/i.test(c.corpus),
-    mensagemFalha:'Pregão de bens sem prazo mínimo de 8 dias úteis.',
-    recomendacao:'Fixar prazo mínimo de 8 dias úteis (Art. 55, I, "a").',
-  },
+  id:'B5_01', bloco:5, nome:'Prazo mínimo de 8 dias úteis (Pregão — bens)',
+  fundamento:'Art. 55, I, "a" — Lei 14.133/2021', severidade:'CRITICA',
+  aplicavel: c => /preg[aã]o/i.test(c.modalidade?.modalidade || '') && c.meta?.tipoObjeto === 'bens',
+  test: c => /(8\s*\(?[oO]ito\)?\s*dias\s*[uú]teis|prazo\s+m[íi]nimo\s+de\s+8\s+dias|art\.?\s*55,?\s*i,?\s*["']?a["']?|8\s+dias\s+[uú]teis|oito\s+dias|≥\s*8|pelo\s+menos\s+8)/i.test(c.corpus),
+  mensagemFalha:'Pregão de bens sem prazo mínimo de 8 dias úteis.',
+  recomendacao:'Fixar prazo mínimo de 8 dias úteis (Art. 55, I, "a").',
+},
   {
     id:'B5_02', bloco:5, nome:'Prazo mínimo de 10 dias úteis (Pregão — serviços)',
     fundamento:'Art. 55, I, "b" — Lei 14.133/2021', severidade:'CRITICA',
@@ -510,17 +544,17 @@ const MATRIZ_CORE_30 = [
     recomendacao:'Prever publicação obrigatória no PNCP (Art. 54).',
   },
   {
-    id:'B5_05', bloco:5, nome:'Impugnação e recurso em fase única (3 dias úteis)',
-    fundamento:'Art. 164 · Art. 165 — Lei 14.133/2021', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => {
-      const impug = /(impugna[cç][aã]o|esclarecimento)/i.test(c.corpus);
-      const rec   = /(3\s+dias\s+[uú]teis|tr[eê]s\s+dias|fase\s+[uú]nica|recurso\s+[uú]nico)/i.test(c.corpus);
-      return impug && rec;
-    },
-    mensagemFalha:'Sem regras claras de impugnação/recurso ou fora do prazo legal.',
-    recomendacao:'Fixar impugnação e recurso em fase única com prazo de 3 dias úteis.',
+  id:'B5_05', bloco:5, nome:'Impugnação e recurso em fase única (3 dias úteis)',
+  fundamento:'Art. 164 · Art. 165 — Lei 14.133/2021', severidade:'MEDIA',
+  aplicavel: () => true,
+  test: c => {
+    const impug = /(impugna[cç][õo]es?|esclarecimento|impugn[aá]vel)/i.test(c.corpus);
+    const recurso = /(fase\s+[uú]nica|3\s*\(?[trêeTRÊE]+\)?\s*dias\s*[uú]teis|tr[eê]s\s+dias|recurso[s]?\s+(?:administrativo|em\s+fase|[uú]nico)|art\.?\s*165|fase\s+recursal)/i.test(c.corpus);
+    return impug || recurso;
   },
+  mensagemFalha:'Sem regras claras de impugnação/recurso ou fora do prazo legal.',
+  recomendacao:'Fixar impugnação e recurso em fase única com prazo de 3 dias úteis.',
+},
 
   /* ============ BLOCO 6 — GESTÃO CONTRATUAL ============ */
   {
@@ -545,13 +579,13 @@ const MATRIZ_CORE_30 = [
     recomendacao:'Designar separadamente agente de contratação, pregoeiro e equipe de apoio.',
   },
   {
-    id:'B6_03', bloco:6, nome:'Recebimento provisório e definitivo',
-    fundamento:'Art. 140 — Lei 14.133/2021', severidade:'MEDIA',
-    aplicavel: () => true,
-    test: c => /(recebimento\s+provis[óo]rio|recebimento\s+definitivo|aceite\s+provis[óo]rio|aceite\s+definitivo)/i.test(c.corpus),
-    mensagemFalha:'Prazos e critérios de recebimento não definidos.',
-    recomendacao:'Definir recebimento provisório e definitivo (Art. 140).',
-  },
+  id:'B6_03', bloco:6, nome:'Recebimento provisório e definitivo',
+  fundamento:'Art. 140 — Lei 14.133/2021', severidade:'MEDIA',
+  aplicavel: () => true,
+  test: c => /(recebido\s+provisoriamente|recebimento\s+definitivo|recebimento\s+provis[óo]rio|aceite\s+provis[óo]rio|aceite\s+definitivo|art\.?\s*140)/i.test(c.corpus),
+  mensagemFalha:'Prazos e critérios de recebimento não definidos.',
+  recomendacao:'Definir recebimento provisório e definitivo (Art. 140).',
+},
   {
     id:'B6_04', bloco:6, nome:'Pagamento em até 30 dias após NF e aceite',
     fundamento:'Art. 141 — Lei 14.133/2021', severidade:'BAIXA',
