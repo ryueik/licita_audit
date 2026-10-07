@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
-  <meta name="description" content="Auditoria de conformidade para processos licitatórios — verificações essenciais da Lei nº 14.133/2021." />
+  <meta name="description" content="Auditoria de conformidade para processos licitatórios — matriz dinâmica cobrindo todas as modalidades, naturezas e critérios da Lei nº 14.133/2021." />
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
 
@@ -42,45 +42,46 @@
           </svg>
           Novo Processo
         </button>
-        <button id="btnCarregarExemplo" class="btn btn--ghost btn--block" type="button" style="margin-top:10px;">
-          Carregar Exemplo
-        </button>
+        <button id="btnCarregarExemplo" class="btn btn--ghost btn--block" type="button">Carregar Exemplo</button>
       </section>
 
       <section class="panel">
-        <h2 class="panel__title">Parâmetros</h2>
+        <h2 class="panel__title">Perfil da Licitação</h2>
+
         <label class="field">
-          <span class="field__label">Objeto predominante</span>
-          <select id="paramObjeto" class="select">
-            <option value="auto">Detectar automaticamente</option>
-            <option value="bens">Aquisição de bens</option>
-            <option value="servicos-comuns">Serviços comuns / TI</option>
-            <option value="servicos-especiais">Serviços especiais</option>
-            <option value="obras">Obras e serviços de engenharia</option>
-            <option value="alienacao">Alienação de bens</option>
-            <option value="intelectual">Trabalho técnico, científico ou artístico</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field__label">Modalidade declarada</span>
+          <span class="field__label">Modalidade (Art. 28)</span>
           <select id="paramModalidade" class="select">
             <option value="auto">Detectar automaticamente</option>
-            <option value="pregao">Pregão</option>
-            <option value="concorrencia">Concorrência</option>
-            <option value="concurso">Concurso</option>
-            <option value="leilao">Leilão</option>
-            <option value="dialogo">Diálogo Competitivo</option>
-            <option value="dispensa">Dispensa de Licitação</option>
-            <option value="inexigibilidade">Inexigibilidade de Licitação</option>
+            <option value="pregao">Pregão (Art. 29)</option>
+            <option value="concorrencia">Concorrência (Art. 29)</option>
+            <option value="concurso">Concurso (Art. 30)</option>
+            <option value="leilao">Leilão (Art. 31)</option>
+            <option value="dialogo">Diálogo Competitivo (Art. 32)</option>
+            <option value="dispensa">Dispensa de Licitação (Art. 75)</option>
+            <option value="inexigibilidade">Inexigibilidade (Art. 74)</option>
           </select>
         </label>
+
         <label class="field">
-          <span class="field__label">Critério de julgamento</span>
+          <span class="field__label">Natureza do Objeto (Art. 6º)</span>
+          <select id="paramObjeto" class="select">
+            <option value="auto">Detectar automaticamente</option>
+            <option value="bens">Bens comuns</option>
+            <option value="servicos-comuns">Serviços comuns</option>
+            <option value="servicos-especiais">Serviços especiais</option>
+            <option value="obras">Obras e serviços de engenharia</option>
+            <option value="intelectual">Serviços técnicos intelectuais</option>
+            <option value="alienacao">Alienação de bens / Concessão</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="field__label">Critério de Julgamento (Art. 33)</span>
           <select id="paramCriterio" class="select">
             <option value="auto">Detectar automaticamente</option>
             <option value="menor-preco">Menor preço</option>
             <option value="maior-desconto">Maior desconto</option>
-            <option value="melhor-tecnica">Melhor técnica</option>
+            <option value="melhor-tecnica">Melhor técnica ou conteúdo artístico</option>
             <option value="tecnica-preco">Técnica e preço</option>
             <option value="maior-lance">Maior lance</option>
             <option value="maior-retorno">Maior retorno econômico</option>
@@ -134,7 +135,7 @@
           </svg>
         </div>
         <h3>Comece criando um Processo</h3>
-        <p>Organize múltiplos documentos por processo (Edital, TR, ETP, etc.), atribua cores e tags, e analise individualmente ou de forma consolidada.</p>
+        <p>Organize múltiplos documentos por processo, atribua cores e tags, e audite individualmente ou de forma consolidada em todas as combinações possíveis da Lei nº 14.133/2021.</p>
         <button class="btn btn--primary" id="btnNovoProcessoEmpty" type="button">+ Criar Primeiro Processo</button>
       </section>
 
