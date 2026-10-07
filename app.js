@@ -1,11 +1,14 @@
 /* ============================================================================
  * LicitaAudit · app.js
  * ----------------------------------------------------------------------------
- * v1.1.0 — Correções:
- *   • Detecção contextual de documentos ausentes (falsos positivos)
- *   • Extração precisa de "Modalidade:" e "Objeto:" via regex
- *   • Validação jurídica robusta Objeto × Modalidade (Art. 6º, XLI · Art. 28-32)
- *   • Truncamento de nome de arquivo preservando a extensão
+ * v1.2.0 — Correções:
+ *   • Análise ISOLADA POR LINHA (evita contaminação entre requisitos no mesmo
+ *     parágrafo/bloco). Ex.: "ETP [x] TR - Ausente" não contamina mais o ETP.
+ *   • Suporte a marcadores de checkbox "[ ]" (ausente) e "[x]" (presente).
+ *   • Requisito não mencionado em nenhuma linha → status "Atenção".
+ *   • Extração robusta dos campos "Modalidade:" e "Objeto:" via regex.
+ *   • Validação jurídica Objeto × Modalidade (Art. 6º, XLI · Art. 28 a 32).
+ *   • Truncamento de nome de arquivo preservando a extensão.
  * ========================================================================== */
 
 'use strict';
@@ -19,7 +22,7 @@ const state = {
   isAnalyzing: false,
 };
 
-const $  = (sel, ctx = document) => ctx.querySelector(sel);
+const $ = (sel, ctx = document) => ctx.querySelector(sel);
 
 const els = {
   dropzone:        $('#dropzone'),
@@ -42,7 +45,7 @@ const els = {
 };
 
 /* ==========================================================================
- * 2. UTILITÁRIOS
+ * 2. UTILITÁRIOS GERAIS
  * ======================================================================== */
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -56,6 +59,7 @@ function formatBytes(bytes) {
 
 const extOf = (name) => (name.split('.').pop() || '').toLowerCase();
 
+/** Normaliza texto: minúsculas, sem acentos, espaços únicos. */
 function normalize(str) {
   return (str || '')
     .toString()
@@ -66,16 +70,13 @@ function normalize(str) {
     .trim();
 }
 
-function hasAny(text, terms) {
-  const t = normalize(text);
-  return terms.some((term) => t.includes(normalize(term)));
-}
-
+/** Conta termos presentes no texto (normalizado). */
 function countTerms(text, terms) {
   const t = normalize(text);
   return terms.reduce((acc, term) => acc + (t.includes(normalize(term)) ? 1 : 0), 0);
 }
 
+/** Escapa HTML para inserção segura. */
 function escapeHtml(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -87,7 +88,7 @@ function escapeHtml(str) {
 
 /**
  * Trunca o nome do arquivo preservando SEMPRE a extensão.
- * Ex.: "Documento_de_Teste_Licitacao_2024_Final.pdf"  →  "Documento_de_Teste_Licita….pdf"
+ * Ex.: "Documento_de_Teste_Licitacao_2024_Final.pdf" → "Documento_de_Teste_Licita….pdf"
  */
 function truncateFileName(name, maxBase = 30) {
   const dot = name.lastIndexOf('.');
@@ -95,111 +96,170 @@ function truncateFileName(name, maxBase = 30) {
     return name.length > maxBase ? name.slice(0, maxBase) + '…' : name;
   }
   const base = name.slice(0, dot);
-  const ext  = name.slice(dot); // inclui o ponto
+  const ext  = name.slice(dot);
   if (base.length <= maxBase) return name;
   return base.slice(0, maxBase - 1).trimEnd() + '…' + ext;
 }
 
 /* ==========================================================================
- * 3. DETECÇÃO CONTEXTUAL (ANTI-FALSOS-POSITIVOS)
+ * 3. ANÁLISE ISOLADA POR LINHA (NÚCLEO DA CORREÇÃO)
+ * --------------------------------------------------------------------------
+ * Estratégia:
+ *   1) Quebrar o corpus em LINHAS não vazias.
+ *   2) Para cada requisito, encontrar linhas que mencionam o termo.
+ *   3) Avaliar APENAS a linha do requisito (isolamento).
+ *   4) Priorizar marcadores explícitos: [x] = conforme, [ ] = ausente.
+ *   5) Caso contrário, usar marcadores textuais de ausência na MESMA linha.
+ *   6) Nenhuma menção → status "Atenção" (não encontrado).
  * ======================================================================== */
 
-/** Marcadores que indicam AUSÊNCIA do documento mesmo que a string exista. */
+/** Marcadores textuais que indicam AUSÊNCIA (aplicados apenas na linha-alvo). */
 const NEGATIVE_MARKERS = [
   'ausente', 'ausencia', 'pendente', 'faltante', 'em falta',
-  'nao anexado', 'nao anexa', 'nao anexo', 'nao incluido', 'nao incluida',
-  'nao localizado', 'nao localizada', 'nao encontrado', 'nao encontrada',
-  'nao consta', 'nao constam', 'nao apresentado', 'nao apresentada',
-  'nao elaborado', 'nao elaborada', 'nao ha', 'inexistente',
-  'omisso', 'omissa', 'a elaborar', 'a providenciar', 'a anexar',
-  'a ser elaborado', 'a ser anexado', 'deve ser incluido', 'deve ser anexado',
-  'necessario incluir', 'necessario anexar', 'nao foi possivel',
-  'nao se aplica', 'nao aplicavel', 'aguardando', 'em elaboracao',
+  'nao anexado', 'nao anexa', 'nao anexo',
+  'nao incluido', 'nao incluida', 'nao consta', 'nao constam',
+  'nao localizado', 'nao localizada',
+  'nao encontrado', 'nao encontrada',
+  'nao apresentado', 'nao apresentada',
+  'nao elaborado', 'nao elaborada',
+  'nao foi possivel', 'nao se aplica', 'nao aplicavel',
+  'inexistente', 'omisso', 'omissa',
+  'a elaborar', 'a providenciar', 'a anexar',
+  'a ser elaborado', 'a ser anexado',
+  'deve ser incluido', 'deve ser anexado',
+  'necessario incluir', 'necessario anexar',
+  'em elaboracao', 'aguardando',
 ];
 
-/** Encontra todas as posições de um termo (case-insensitive) no texto bruto. */
-function findTermPositions(text, term) {
-  const lower = text.toLowerCase();
-  const tLower = term.toLowerCase();
-  const positions = [];
-  let idx = 0;
-  while ((idx = lower.indexOf(tLower, idx)) !== -1) {
-    positions.push(idx);
-    idx += tLower.length;
-  }
-  return positions;
-}
+/** Marcadores textuais que indicam PRESENÇA (aplicados apenas na linha-alvo). */
+const POSITIVE_MARKERS = [
+  'presente', 'anexado', 'anexa', 'anexo',
+  'incluido', 'incluida', 'consta', 'constam',
+  'localizado', 'localizada', 'encontrado', 'encontrada',
+  'elaborado', 'elaborada', 'apresentado', 'apresentada',
+  'aprovado', 'aprovada', 'conforme', 'ok', 'sim',
+];
 
-/** Verifica se o contexto ao redor de uma ocorrência é negativo (ausência). */
-function isNegativeContext(text, pos, termLen, window = 130) {
-  const start = Math.max(0, pos - window);
-  const end   = Math.min(text.length, pos + termLen + window);
-  const ctx   = normalize(text.slice(start, end));
-  return NEGATIVE_MARKERS.some((m) => ctx.includes(m));
-}
-
-/** Constrói um trecho (snippet) legível em torno de uma posição. */
-function makeSnippet(text, pos, termLen, radius = 90) {
-  const start = Math.max(0, pos - radius);
-  const end   = Math.min(text.length, pos + termLen + radius);
-  let snippet = text.slice(start, end).replace(/\s+/g, ' ').trim();
-  if (start > 0) snippet = '…' + snippet;
-  if (end < text.length) snippet = snippet + '…';
-  return snippet;
+/**
+ * Divide o corpus em linhas limpas (ignora vazias e cabeçalhos de arquivo).
+ * Também retorna a linha do corpus ORIGINAL para citações precisas.
+ */
+function splitLines(corpus) {
+  return corpus
+    .split(/\r?\n/)
+    .map((raw, idx) => ({
+      idx,
+      raw: raw,
+      trimmed: raw.trim(),
+      normalized: normalize(raw),
+    }))
+    .filter((l) => l.trimmed.length > 0 && !/^={3,}/.test(l.trimmed));
 }
 
 /**
- * Avalia presença de um termo com verificação contextual.
- * Retorna:
- *   { present: true,  snippet, term, negative: false }  → conforme
- *   { present: false, snippet, term, negative: true  }  → declarado ausente
- *   { present: false, snippet: null, term: null, negative: false } → não mencionado
+ * Analisa UMA linha em busca de marcador de checkbox.
+ *   [x] / [X] → presente
+ *   [ ]       → ausente
  */
-function evalPresence(text, terms) {
-  for (const term of terms) {
-    const positions = findTermPositions(text, term);
-    if (!positions.length) continue;
+function detectCheckbox(line) {
+  if (/\[\s*[xX]\s*\]/.test(line)) return 'checked';
+  if (/\[\s*\]/.test(line))       return 'unchecked';
+  return null;
+}
 
-    let positivePos = -1;
-    let negativePos = -1;
+/**
+ * Verifica se o texto da linha contém um termo (normalizado).
+ * Retorna o índice da ocorrência no texto cru ou -1.
+ */
+function lineContainsTerm(line, term) {
+  return normalize(line).includes(normalize(term));
+}
 
-    for (const pos of positions) {
-      if (isNegativeContext(text, pos, term.length)) {
-        if (negativePos === -1) negativePos = pos;
-      } else {
-        positivePos = pos;
-        break; // achou uma ocorrência "positiva" — suficiente
+/**
+ * Classifica uma linha que menciona um requisito.
+ * Retorna: 'ok' | 'danger' | null (quando não conclusivo).
+ */
+function classifyRequirementLine(lineRaw, lineNorm) {
+  // 1) Checkbox tem precedência absoluta
+  const checkbox = detectCheckbox(lineRaw);
+  if (checkbox === 'checked')   return { status: 'ok',     reason: 'Marcado como [x]' };
+  if (checkbox === 'unchecked') return { status: 'danger', reason: 'Marcado como [ ]' };
+
+  // 2) Marcadores textuais NA MESMA LINHA
+  const hasNeg = NEGATIVE_MARKERS.some((m) => lineNorm.includes(normalize(m)));
+  const hasPos = POSITIVE_MARKERS.some((m) => lineNorm.includes(normalize(m)));
+
+  if (hasNeg && !hasPos) return { status: 'danger', reason: 'Termo de ausência na linha' };
+  if (hasPos && !hasNeg) return { status: 'ok',     reason: 'Termo de presença na linha' };
+  if (hasPos && hasNeg)  return { status: 'warn',   reason: 'Linha contém termos positivos e negativos' };
+
+  // 3) Sem marcadores explícitos — só a menção do requisito conta como presença
+  return { status: 'ok', reason: 'Requisito mencionado sem termos negativos' };
+}
+
+/**
+ * ⭐ FUNÇÃO CENTRAL: avalia a presença de um requisito por LINHA.
+ *
+ * Regras:
+ *   - Se a linha tem [x] ou termo positivo → CONFORME
+ *   - Se a linha tem [ ] ou termo negativo → NÃO CONFORME
+ *   - Se o requisito é mencionado mas a linha é ambígua → ATENÇÃO
+ *   - Se NÃO há menção em nenhuma linha → ATENÇÃO (não encontrado)
+ *
+ * @param {Array} lines  Linhas do corpus (resultado de splitLines)
+ * @param {Array<string>} terms  Termos/aliases do requisito
+ * @returns {{status:string, line:object|null, snippet:string|null, term:string|null, reason:string}}
+ */
+function evalRequirementByLine(lines, terms) {
+  // 1) Encontra todas as linhas que mencionam o requisito
+  const matches = [];
+  for (const line of lines) {
+    for (const term of terms) {
+      if (lineContainsTerm(line.raw, term)) {
+        matches.push({ line, term });
+        break; // uma ocorrência por linha basta
       }
     }
-
-    if (positivePos !== -1) {
-      return {
-        present: true,
-        negative: false,
-        snippet: makeSnippet(text, positivePos, term.length),
-        term,
-      };
-    }
-    if (negativePos !== -1) {
-      return {
-        present: false,
-        negative: true,
-        snippet: makeSnippet(text, negativePos, term.length),
-        term,
-      };
-    }
   }
-  return { present: false, negative: false, snippet: null, term: null };
+
+  // 2) Nenhuma linha menciona → ATENÇÃO
+  if (matches.length === 0) {
+    return {
+      status: 'warn',
+      line: null,
+      snippet: null,
+      term: null,
+      reason: 'Requisito não mencionado no documento',
+    };
+  }
+
+  // 3) Prioriza linhas com sinal explícito (checkbox ou termo positivo/negativo).
+  //    Ordem: [x] ou termo POSITIVO → [ ] ou termo NEGATIVO → ambíguas.
+  const evaluated = matches.map(({ line, term }) => ({
+    line,
+    term,
+    ...classifyRequirementLine(line.raw, line.normalized),
+  }));
+
+  const priority = { ok: 0, danger: 1, warn: 2 };
+  evaluated.sort((a, b) => priority[a.status] - priority[b.status]);
+
+  const chosen = evaluated[0];
+
+  return {
+    status: chosen.status,
+    line: chosen.line,
+    snippet: chosen.line.trimmed.slice(0, 260),
+    term: chosen.term,
+    reason: chosen.reason,
+  };
 }
 
 /* ==========================================================================
  * 4. EXTRAÇÃO DE CAMPOS ROTULADOS (Modalidade / Objeto)
  * ======================================================================== */
 
-/**
- * Extrai o valor de um campo rotulado (ex.: "Modalidade: Leilão").
- * Aceita variações: ":", "-", "–", "—" e quebra de linha opcional após o rótulo.
- */
+/** Extrai o valor de um campo rotulado (ex.: "Modalidade: Leilão"). */
 function extractLabeledField(text, labelPatterns) {
   for (const label of labelPatterns) {
     const rx = new RegExp(
@@ -208,7 +268,6 @@ function extractLabeledField(text, labelPatterns) {
     );
     const m = text.match(rx);
     if (m) {
-      // Corta na primeira pontuação forte para não pegar a frase inteira
       const value = m[1].split(/\s*[.;]\s+/)[0].trim();
       if (value && value.length >= 2) return value.slice(0, 200);
     }
@@ -236,54 +295,44 @@ function extractObjetoField(text) {
   ]);
 }
 
-/** Mapeia o texto do campo "Modalidade" para a chave interna. */
 function classifyModalidadeValue(value) {
   if (!value) return null;
   const v = normalize(value);
-  if (/dialogo\s+competitivo|dialogo/.test(v))    return 'dialogo';
-  if (/inexigibilidade/.test(v))                  return 'inexigibilidade';
-  if (/dispensa/.test(v))                         return 'dispensa';
-  if (/leil[aã]o/.test(v))                        return 'leilao';
-  if (/concorr[eê]ncia/.test(v))                  return 'concorrencia';
-  if (/concurso/.test(v))                         return 'concurso';
-  if (/preg[aã]o/.test(v))                        return 'pregao';
+  if (/dialogo\s+competitivo|dialogo/.test(v)) return 'dialogo';
+  if (/inexigibilidade/.test(v))               return 'inexigibilidade';
+  if (/dispensa/.test(v))                      return 'dispensa';
+  if (/leil[aã]o/.test(v))                     return 'leilao';
+  if (/concorr[eê]ncia/.test(v))               return 'concorrencia';
+  if (/concurso/.test(v))                      return 'concurso';
+  if (/preg[aã]o/.test(v))                     return 'pregao';
   return null;
 }
 
-/** Mapeia o texto do campo "Objeto" para a chave interna. */
 function classifyObjetoValue(value) {
   if (!value) return null;
   const v = normalize(value);
 
-  // 1) Alienação (prioridade máxima — é a que causa o falso positivo atual)
   if (/(alienacao|venda\s+de\s+bens|leilao\s+de\s+bens|bens\s+moveis?\s+inserviveis?|bens\s+imoveis?\s+da\s+administracao)/.test(v)) {
     return 'alienacao';
   }
-  // 2) Obras / engenharia
   if (/(obra|obras|engenharia|construcao|reforma|pavimentacao|edificacao|saneamento)/.test(v)) {
     return 'obras';
   }
-  // 3) Trabalho técnico/científico/artístico
   if (/(trabalho\s+tecnico|trabalho\s+cientifico|trabalho\s+artistico|projeto\s+arquitetonico|conteudo\s+artistico)/.test(v)) {
     return 'intelectual';
   }
-  // 4) TI / complexidade técnica → serviço especial
   if (/(ti\b|tecnologia\s+da\s+informacao|software|sistema\s+informat|computador|notebook|servidor\s+de\s+rede|datacenter|nuvem|cloud|licencas?\s+de\s+software)/.test(v)) {
     return 'servicos-especiais';
   }
-  // 5) Serviços comuns (limpeza, vigilância, apoio administrativo)
   if (/(servico\s+comum|servicos\s+comuns|limpeza|conservacao|vigilancia|porteiro|apoio\s+administrativo|recepcionista|jardinagem)/.test(v)) {
     return 'servicos-comuns';
   }
-  // 6) Bens comuns
   if (/(bens?\s+comuns?|material\s+de\s+escritorio|generos?\s+alimenticios?|mobiliario|papelaria|uniformes|medicamentos?)/.test(v)) {
     return 'bens';
   }
-  // 7) Aquisição genérica de bens
   if (/(aquisicao\s+de\s+bens|compra\s+de\s+bens|aquisicao|compra)/.test(v)) {
     return 'bens';
   }
-  // 8) Contratação genérica de serviços
   if (/(contratacao\s+de\s+servicos|prestacao\s+de\s+servicos|servicos)/.test(v)) {
     return 'servicos-comuns';
   }
@@ -294,11 +343,6 @@ function classifyObjetoValue(value) {
  * 5. MATRIZ LEGAL — Compatibilidade Objeto × Modalidade (Lei 14.133/2021)
  * ======================================================================== */
 
-/**
- * Matriz de compatibilidade.
- * Cada modalidade aponta os objetos PERMITIDOS.
- * Base: Arts. 6º, XXVIII a XLI; Arts. 28 a 32.
- */
 const MODALIDADE_OBJETO_MATRIX = {
   pregao:          ['bens', 'servicos-comuns'],
   concorrencia:    ['bens', 'servicos-comuns', 'servicos-especiais', 'obras', 'alienacao', 'intelectual'],
@@ -325,50 +369,14 @@ const OBJETO_LABEL_PT = {
   indefinido: 'Não identificado',
 };
 
-/** Verifica compatibilidade com base na matriz legal. */
 function checkModalidadeCompatibilidade(objeto, modalidade) {
   const permitidas = MODALIDADE_OBJETO_MATRIX[modalidade];
-  if (!permitidas) {
-    return { ok: true, permitidas: [], motivo: null };
-  }
-  const ok = permitidas.includes(objeto);
-  return { ok, permitidas, motivo: ok ? null : `objeto "${objeto}" não é compatível com a modalidade "${modalidade}".` };
+  if (!permitidas) return { ok: true, permitidas: [] };
+  return { ok: permitidas.includes(objeto), permitidas };
 }
 
 /* ==========================================================================
- * 6. DETECÇÃO HEURÍSTICA (fallback quando não há campo rotulado)
- * ======================================================================== */
-
-const KB = {
-  etp: ['estudo tecnico preliminar', 'estudo técnico preliminar', 'etp', 'art. 18', 'artigo 18'],
-  tr:  ['termo de referencia', 'termo de referência', 'projeto basico', 'projeto básico', 'anteprojeto', 'art. 40'],
-  orcamento: ['estimativa de valor', 'estimativa do valor', 'planilha orcamentaria', 'planilha orçamentária', 'valor estimado', 'pesquisa de precos', 'pesquisa de preços', 'art. 23'],
-  matrizRiscos: ['matriz de risco', 'matriz de riscos', 'gerenciamento de riscos', 'art. 22', 'art. 100'],
-  dotacao: ['dotacao orcamentaria', 'dotação orçamentária', 'adequacao orcamentaria', 'adequação orçamentária', 'disponibilidade orcamentaria', 'classificacao economica'],
-  justificativa: ['justificativa', 'motivacao', 'motivação', 'art. 5'],
-  prazo: ['prazo de divulgacao', 'prazo mínimo', 'prazo minimo', 'dias uteis', 'dias úteis', 'art. 55'],
-  leiAntiga: ['8.666', '8.666/93', '8.666/1993'],
-  alienacao: ['alienacao', 'alienação', 'venda de bens', 'leilao de bens'],
-  obra: ['obra', 'obras', 'engenharia', 'construcao', 'construção', 'reforma'],
-  intelectual: ['trabalho tecnico', 'trabalho técnico', 'cientifico', 'científico', 'artistico', 'artístico'],
-  inovacao: ['inovacao', 'inovação', 'complexidade tecnica'],
-};
-
-function detectObjetoHeuristic(text) {
-  const v = normalize(text);
-  // Alienação só se realmente fala de alienação (sem contexto negativo)
-  const alienacaoEv = evalPresence(text, KB.alienacao);
-  if (alienacaoEv.present) return 'alienacao';
-  if (hasAny(v, KB.obra)) return 'obras';
-  if (hasAny(v, KB.intelectual)) return 'intelectual';
-  if (/(ti\b|tecnologia da informacao|software|sistema informat|computador|notebook)/.test(v)) return 'servicos-especiais';
-  if (/(servico comum|servicos comuns|limpeza|vigilancia|apoio administrativo)/.test(v)) return 'servicos-comuns';
-  if (/(aquisicao de bens|compra de|bens comuns|material de escritorio)/.test(v)) return 'bens';
-  return 'indefinido';
-}
-
-/* ==========================================================================
- * 7. EXTRAÇÃO DE TEXTO (PDF.js / Mammoth.js / TXT)
+ * 6. EXTRAÇÃO DE TEXTO (PDF.js / Mammoth.js / TXT)
  * ======================================================================== */
 
 function configurePdfWorker() {
@@ -385,7 +393,26 @@ async function extractPdf(file) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    parts.push(content.items.map((it) => it.str).join(' '));
+
+    // Reconstrói linhas usando as coordenadas Y para preservar a estrutura.
+    const items = content.items
+      .map((it) => ({ str: it.str, y: it.transform?.[5] ?? 0, x: it.transform?.[4] ?? 0 }))
+      .filter((it) => it.str && it.str.trim());
+
+    items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
+
+    let lastY = null;
+    let lineBuf = [];
+    for (const it of items) {
+      if (lastY !== null && Math.abs(it.y - lastY) > 2) {
+        parts.push(lineBuf.join(' '));
+        lineBuf = [];
+      }
+      lineBuf.push(it.str);
+      lastY = it.y;
+    }
+    if (lineBuf.length) parts.push(lineBuf.join(' '));
+    parts.push(''); // separador de página
   }
   return parts.join('\n');
 }
@@ -416,6 +443,51 @@ async function extractFileText(file) {
 }
 
 /* ==========================================================================
+ * 7. BASE DE CONHECIMENTO — Termos por requisito
+ * ======================================================================== */
+
+const KB = {
+  etp: [
+    'estudo tecnico preliminar', 'estudo técnico preliminar',
+    'etp', 'art. 18', 'artigo 18',
+  ],
+  tr: [
+    'termo de referencia', 'termo de referência',
+    'projeto basico', 'projeto básico',
+    'anteprojeto', 'art. 40',
+  ],
+  orcamento: [
+    'estimativa de valor', 'estimativa do valor',
+    'planilha orcamentaria', 'planilha orçamentária',
+    'valor estimado', 'pesquisa de precos', 'pesquisa de preços',
+    'art. 23',
+  ],
+  matrizRiscos: [
+    'matriz de risco', 'matriz de riscos',
+    'gerenciamento de riscos', 'art. 22', 'art. 100',
+  ],
+  dotacao: [
+    'dotacao orcamentaria', 'dotação orçamentária',
+    'adequacao orcamentaria', 'adequação orçamentária',
+    'disponibilidade orcamentaria', 'classificacao economica',
+  ],
+  justificativa: [
+    'justificativa', 'motivacao', 'motivação', 'art. 5',
+  ],
+  prazo: [
+    'prazo de divulgacao', 'prazo mínimo', 'prazo minimo',
+    'dias uteis', 'dias úteis', 'art. 55',
+  ],
+  criterio: [
+    'menor preco', 'menor preço', 'maior desconto',
+    'melhor tecnica', 'melhor técnica',
+    'tecnica e preco', 'técnica e preço',
+    'maior lance', 'maior retorno economico', 'maior retorno econômico',
+  ],
+  leiAntiga: ['8.666', '8.666/93', '8.666/1993'],
+};
+
+/* ==========================================================================
  * 8. MOTOR DE REGRAS — Auditoria
  * ======================================================================== */
 
@@ -427,170 +499,136 @@ function buildCorpus() {
 }
 
 function runAudit() {
-  const text = buildCorpus();
+  const corpus = buildCorpus();
+  const lines  = splitLines(corpus);
+
   const objetoParam     = els.paramObjeto.value;
   const modalidadeParam = els.paramModalidade.value;
   const criterioParam   = els.paramCriterio.value;
 
   /* ---------- Extração explícita dos campos rotulados ---------- */
-  const modalidadeField = extractModalidadeField(text);
-  const objetoField     = extractObjetoField(text);
+  const modalidadeField = extractModalidadeField(corpus);
+  const objetoField     = extractObjetoField(corpus);
 
   const modalidadeFromField = classifyModalidadeValue(modalidadeField);
   const objetoFromField     = classifyObjetoValue(objetoField);
 
-  /* ---------- Detecção heurística (fallback) ---------- */
-  const objetoHeuristico = detectObjetoHeuristic(text);
-
-  /* ---------- Prioridade: parâmetro > campo rotulado > heurística ---------- */
+  /* ---------- Prioridade: parâmetro > campo rotulado > indefinido ---------- */
   const objeto     = objetoParam     !== 'auto' ? objetoParam
-                  : objetoFromField     || objetoHeuristico;
+                  : objetoFromField     || 'indefinido';
   const modalidade = modalidadeParam !== 'auto' ? modalidadeParam
                   : modalidadeFromField || 'indefinida';
   const criterio   = criterioParam   !== 'auto' ? criterioParam
-                  : detectCriterioHeuristic(text);
+                  : detectCriterioHeuristic(corpus);
 
-  /* ---------- Checagens ---------- */
+  /* ---------- Checagens (todas por LINHA) ---------- */
   const checks = [];
+
+  // Helper para montar a mensagem de evidência
+  const buildEvidence = (result, fallbackReason) => {
+    if (result.status === 'warn' && !result.snippet) {
+      return fallbackReason;
+    }
+    const prefix = result.status === 'danger' ? '⚠️ '
+                 : result.status === 'warn'   ? '⚠️ '
+                 : '✓ ';
+    return `${prefix}${result.reason}: "${result.snippet}"`;
+  };
 
   // 1. ETP
   {
-    const ev = evalPresence(text, KB.etp);
-    let status = 'danger';
-    let evidencia = 'Não foram encontradas referências ao ETP no corpus analisado.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      status = 'danger';
-      evidencia = `⚠️ O documento DECLARA AUSÊNCIA do ETP: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.etp);
     checks.push({
       id: 'etp',
       requisito: 'Estudo Técnico Preliminar (ETP)',
       lei: 'Art. 18, §1º, I',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Elaborar e anexar o Estudo Técnico Preliminar com descrição da necessidade, levantamento de mercado e definição da solução.',
+      status: r.status,
+      evidencia: buildEvidence(r, 'ETP não mencionado no corpus analisado.'),
+      correcao: r.status === 'ok' ? null
+        : 'Elaborar e anexar o Estudo Técnico Preliminar com descrição da necessidade, levantamento de mercado e definição da solução.',
     });
   }
 
   // 2. TR / Projeto Básico
   {
-    const ev = evalPresence(text, KB.tr);
-    let status = 'danger';
-    let evidencia = 'Documento estruturante (TR / Projeto Básico) não identificado.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      status = 'danger';
-      evidencia = `⚠️ O documento DECLARA AUSÊNCIA do Termo de Referência / Projeto Básico: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.tr);
     checks.push({
       id: 'tr',
       requisito: 'Termo de Referência / Anteprojeto / Projeto Básico',
       lei: 'Art. 6º, XXIII e XXV · Art. 40',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Anexar Termo de Referência (bens/serviços) ou Projeto Básico/Executivo (obras), conforme o objeto.',
+      status: r.status,
+      evidencia: buildEvidence(r, 'Documento estruturante (TR / Projeto Básico) não mencionado.'),
+      correcao: r.status === 'ok' ? null
+        : 'Anexar Termo de Referência (bens/serviços) ou Projeto Básico/Executivo (obras), conforme o objeto.',
     });
   }
 
   // 3. Estimativa de valor
   {
-    const ev = evalPresence(text, KB.orcamento);
-    let status = 'danger';
-    let evidencia = 'Não há menção a valor estimado ou pesquisa de preços.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      status = 'danger';
-      evidencia = `⚠️ O documento DECLARA AUSÊNCIA da estimativa de valor: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.orcamento);
     checks.push({
       id: 'orcamento',
       requisito: 'Estimativa do valor da contratação',
       lei: 'Art. 23',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Elaborar estimativa de valor com base em pesquisa de preços (painel de preços, contratações similares, mídia especializada).',
+      status: r.status,
+      evidencia: buildEvidence(r, 'Não há menção a valor estimado ou pesquisa de preços.'),
+      correcao: r.status === 'ok' ? null
+        : 'Elaborar estimativa de valor com base em pesquisa de preços (painel de preços, contratações similares, mídia especializada).',
     });
   }
 
   // 4. Dotação orçamentária
   {
-    const ev = evalPresence(text, KB.dotacao);
-    let status = 'warn';
-    let evidencia = 'Não foi possível confirmar dotação orçamentária explícita.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      status = 'warn';
-      evidencia = `⚠️ O documento DECLARA AUSÊNCIA da dotação orçamentária: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.dotacao);
+    // Requisito opcional: eleva "não encontrado" de warn para warn (mantém)
     checks.push({
       id: 'dotacao',
       requisito: 'Adequação orçamentária e indicação de dotação',
       lei: 'Art. 150',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Indicar a dotação orçamentária e o programa de trabalho que suportam a despesa.',
+      status: r.status,
+      evidencia: buildEvidence(r, 'Não foi possível confirmar dotação orçamentária explícita.'),
+      correcao: r.status === 'ok' ? null
+        : 'Indicar a dotação orçamentária e o programa de trabalho que suportam a despesa.',
     });
   }
 
   // 5. Matriz de Riscos
   {
-    const ev = evalPresence(text, KB.matrizRiscos);
+    const r = evalRequirementByLine(lines, KB.matrizRiscos);
     const isObraOuEspecial = ['obras', 'servicos-especiais'].includes(objeto);
-    let status = isObraOuEspecial ? 'danger' : 'warn';
-    let evidencia = 'Matriz de riscos não identificada.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      evidencia = `⚠️ Matriz de riscos declarada ausente: "${ev.snippet}"`;
-    }
+    const finalStatus = (r.status === 'warn' && isObraOuEspecial) ? 'danger' : r.status;
     checks.push({
       id: 'matriz',
       requisito: 'Matriz de Riscos',
       lei: 'Art. 22 · Art. 100',
-      status,
-      evidencia,
-      correcao: ev.present ? null : (isObraOuEspecial
-        ? 'Obrigatória para obras e serviços de engenharia de grande vulto — incluir matriz de alocação de riscos.'
-        : 'Recomenda-se incluir matriz de riscos para clareza contratual, ainda que facultativa.'),
+      status: finalStatus,
+      evidencia: buildEvidence(r, isObraOuEspecial
+        ? 'Matriz de riscos não mencionada — obrigatória para obras/serviços especiais.'
+        : 'Matriz de riscos não mencionada.'),
+      correcao: r.status === 'ok' ? null
+        : (isObraOuEspecial
+            ? 'Obrigatória para obras e serviços de engenharia de grande vulto — incluir matriz de alocação de riscos.'
+            : 'Recomenda-se incluir matriz de riscos para clareza contratual, ainda que facultativa.'),
     });
   }
 
-  // 6. Motivação
+  // 6. Motivação / Justificativa
   {
-    const ev = evalPresence(text, KB.justificativa);
-    let status = 'warn';
-    let evidencia = 'Não foi possível localizar seção de motivação.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      evidencia = `⚠️ Motivação declarada ausente: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.justificativa);
     checks.push({
       id: 'motivacao',
       requisito: 'Motivação e justificativa da contratação',
       lei: 'Art. 5º · Art. 18, §1º',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Explicitar a motivação do ato e a justificativa da escolha da solução.',
+      status: r.status,
+      evidencia: buildEvidence(r, 'Não foi possível localizar seção de motivação.'),
+      correcao: r.status === 'ok' ? null
+        : 'Explicitar a motivação do ato e a justificativa da escolha da solução.',
     });
   }
 
-  // 7. ⭐ Compatibilidade Objeto × Modalidade (validação legal REFORÇADA)
+  // 7. Compatibilidade Objeto × Modalidade (validação legal reforçada)
   {
     const compat = checkModalidadeCompatibilidade(objeto, modalidade);
-
-    // Regra de ouro do Art. 6º, XLI: Leilão SOMENTE para alienação
     let status = compat.ok ? 'ok' : 'danger';
     let evidencia;
     let correcao = null;
@@ -622,7 +660,7 @@ function runAudit() {
         `Objeto identificado: "${OBJETO_LABEL_PT[objeto] || objeto}".`;
       correcao = 'Utilize Pregão (bens/serviços comuns) ou Concorrência.';
     } else if (compat.ok) {
-      evidencia = `Modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" é adequada ao objeto "${OBJETO_LABEL_PT[objeto] || objeto}".`;
+      evidencia = `✓ Modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" é adequada ao objeto "${OBJETO_LABEL_PT[objeto] || objeto}".`;
     } else {
       evidencia = `A modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" não é compatível com o objeto "${OBJETO_LABEL_PT[objeto] || objeto}".`;
       correcao = `Modalidades compatíveis: ${compat.permitidas.map((m) => MODALIDADE_LABEL_PT[m]).join(', ')}.`;
@@ -630,7 +668,7 @@ function runAudit() {
 
     checks.push({
       id: 'compat',
-      requisito: `Compatibilidade Objeto × Modalidade`,
+      requisito: 'Compatibilidade Objeto × Modalidade',
       lei: 'Art. 6º, XLI · Art. 28 a Art. 32',
       status,
       evidencia,
@@ -640,65 +678,52 @@ function runAudit() {
 
   // 8. Prazos (Art. 55)
   {
-    const ev = evalPresence(text, KB.prazo);
-    let status = 'warn';
-    let evidencia = 'Prazos não explicitados de forma clara.';
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    } else if (ev.negative) {
-      evidencia = `⚠️ Prazos declarados ausentes: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.prazo);
     checks.push({
       id: 'prazo',
       requisito: 'Prazos mínimos de divulgação do edital',
       lei: 'Art. 55',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Explicitar os prazos mínimos conforme Art. 55, observando a modalidade e o critério de julgamento.',
+      status: r.status,
+      evidencia: buildEvidence(r, 'Prazos não explicitados de forma clara.'),
+      correcao: r.status === 'ok' ? null
+        : 'Explicitar os prazos mínimos conforme Art. 55, observando a modalidade e o critério de julgamento.',
     });
   }
 
   // 9. Critério de julgamento
   {
-    const ev = evalPresence(text, [
-      'menor preco', 'menor preço', 'maior desconto', 'melhor tecnica', 'melhor técnica',
-      'tecnica e preco', 'técnica e preço', 'maior lance', 'maior retorno economico',
-    ]);
-    let status = 'warn';
-    let evidencia = `Critério detectado: "${criterio}" (sem trecho explícito localizado).`;
-    if (ev.present) {
-      status = 'ok';
-      evidencia = `Localizado: "${ev.snippet}"`;
-    }
+    const r = evalRequirementByLine(lines, KB.criterio);
     checks.push({
       id: 'criterio',
       requisito: 'Critério de julgamento expresso',
       lei: 'Art. 33',
-      status,
-      evidencia,
-      correcao: ev.present ? null : 'Declarar expressamente o critério de julgamento adotado, entre os previstos no Art. 33.',
+      status: r.status,
+      evidencia: r.status === 'warn' && !r.snippet
+        ? `Critério detectado: "${criterio}" (sem trecho explícito localizado).`
+        : buildEvidence(r, 'Critério de julgamento não mencionado.'),
+      correcao: r.status === 'ok' ? null
+        : 'Declarar expressamente o critério de julgamento adotado, entre os previstos no Art. 33.',
     });
   }
 
   // 10. Alerta: Lei 8.666/93 revogada
   {
-    const ev = evalPresence(text, KB.leiAntiga);
+    const r = evalRequirementByLine(lines, KB.leiAntiga);
     checks.push({
       id: 'lei-antiga',
       requisito: 'Ausência de referências à Lei 8.666/93 (revogada)',
       lei: 'Art. 191 · Lei 14.133/2021',
-      status: ev.present ? 'danger' : 'ok',
-      evidencia: ev.present
-        ? `⚠️ Referência à Lei 8.666/93 detectada: "${ev.snippet}"`
+      status: r.status === 'ok' ? 'danger' : 'ok', // invertido: menção = ruim
+      evidencia: r.snippet
+        ? `⚠️ Referência à Lei 8.666/93 detectada: "${r.snippet}"`
         : 'Nenhuma referência à Lei 8.666/93 encontrada.',
-      correcao: ev.present
+      correcao: r.snippet
         ? 'Substituir todas as menções à Lei 8.666/93 pelas disposições correspondentes da Lei 14.133/2021.'
         : null,
     });
   }
 
-  // 11. Divergência entre parâmetro declarado e conteúdo
+  // 11. Divergência entre parâmetro e conteúdo
   if (modalidadeParam !== 'auto' && modalidadeFromField && modalidadeParam !== modalidadeFromField) {
     checks.push({
       id: 'divergencia-modalidade',
@@ -741,14 +766,14 @@ function runAudit() {
     identificacao: {
       objeto,
       objetoFromField,
-      objetoHeuristico,
       modalidade,
       modalidadeFromField,
       modalidadeField,
       objetoField,
       criterio,
       arquivosAnalisados: state.files.filter((f) => f.status === 'ok').length,
-      caracteresAnalisados: text.length,
+      caracteresAnalisados: corpus.length,
+      linhasAnalisadas: lines.length,
     },
     checks,
     correcoes,
@@ -858,6 +883,8 @@ function renderReport(rep) {
         <div class="kv">
           <div class="kv__row"><span class="kv__key">Documentos analisados</span>
             <span class="kv__val">${rep.identificacao.arquivosAnalisados}</span></div>
+          <div class="kv__row"><span class="kv__key">Linhas analisadas</span>
+            <span class="kv__val">${rep.identificacao.linhasAnalisadas.toLocaleString('pt-BR')}</span></div>
           <div class="kv__row"><span class="kv__key">Caracteres processados</span>
             <span class="kv__val">${rep.identificacao.caracteresAnalisados.toLocaleString('pt-BR')}</span></div>
           <div class="kv__row"><span class="kv__key">Data da análise</span>
@@ -1051,7 +1078,7 @@ function exportJson() {
   if (!state.report) return;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '1.1.0',
+    versao: '1.2.0',
     baseNormativa: 'Lei nº 14.133/2021',
     ...state.report,
   };
@@ -1168,7 +1195,11 @@ function bootstrap() {
   configurePdfWorker();
   bindEvents();
   renderFileList();
-  console.info('%cLicitaAudit','background:#5b8cff;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700','· v1.1.0 · Lei 14.133/2021');
+  console.info(
+    '%cLicitaAudit',
+    'background:#5b8cff;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
+    '· v1.2.0 · Lei 14.133/2021 · análise por linha'
+  );
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);
