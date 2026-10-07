@@ -1,8 +1,9 @@
 /* ============================================================================
- * LicitaAudit · app.js — v6.7
+ * LicitaAudit · app.js — v6.7.1
  * ----------------------------------------------------------------------------
  * • Motor abrangente + relatório PDF editorial executivo (v6.6)
- * • NOVO: Importação múltipla de JSON com merge inteligente
+ * • Importação múltipla de JSON com merge inteligente (v6.7)
+ * • FIX v6.7.1: input file criado dinamicamente (multiple garantido)
  * ========================================================================== */
 'use strict';
 
@@ -1000,14 +1001,9 @@ function fecharModal() {
  * 14. PDF INSTITUCIONAL — pdfMake (DESIGN EDITORIAL EXECUTIVO)
  * ======================================================================== */
 const PDF_PALETTE = {
-  primaria:    '#1e3a8a',
-  secundaria:  '#2563eb',
-  texto:       '#1e293b',
-  textoMuted:  '#64748b',
-  textoDim:    '#94a3b8',
-  zebra:       '#f8fafc',
-  borda:       '#e2e8f0',
-  headerTexto: '#ffffff',
+  primaria:    '#1e3a8a', secundaria:  '#2563eb', texto:       '#1e293b',
+  textoMuted:  '#64748b', textoDim:    '#94a3b8', zebra:       '#f8fafc',
+  borda:       '#e2e8f0', headerTexto: '#ffffff',
   okBg:        '#dcfce7',  okFg:     '#15803d',
   warnBg:      '#fef3c7',  warnFg:   '#b45309',
   dangerBg:    '#fee2e2',  dangerFg: '#b91c1c',
@@ -1297,14 +1293,14 @@ function exportarPDFTodos() {
 }
 
 /* ==========================================================================
- * 15. JSON — EXPORTAÇÃO E IMPORTAÇÃO MÚLTIPLA (v6.7)
+ * 15. JSON — EXPORTAÇÃO E IMPORTAÇÃO MÚLTIPLA (v6.7.1)
  * ======================================================================== */
 
 /* ---------- Exportação ---------- */
 function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
-    ferramenta: 'LicitaAudit', versao: '6.7.0',
+    ferramenta: 'LicitaAudit', versao: '6.7.1',
     exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags, criadoEm: p.criadoEm,
@@ -1335,7 +1331,7 @@ function lerArquivoComoTexto(file) {
   });
 }
 
-/* ---------- Normalizador: garante que qualquer JSON vire um processo válido ---------- */
+/* ---------- Normalizador ---------- */
 function normalizarProcessoImportado(proc) {
   const arquivos = Array.isArray(proc?.arquivos) ? proc.arquivos : [];
   return {
@@ -1365,22 +1361,15 @@ function normalizarProcessoImportado(proc) {
   };
 }
 
-/* ---------- Extrator de processos de um JSON bruto (flexível) ---------- */
+/* ---------- Extrator flexível ---------- */
 function extrairProcessosDoJSON(dados) {
-  // 1) Formato preferencial: { processos: [...] }
   if (dados && Array.isArray(dados.processos)) return dados.processos;
-
-  // 2) Array direto de processos
   if (Array.isArray(dados)) return dados;
-
-  // 3) Objeto único de processo exportado fora de wrapper
   if (dados && typeof dados === 'object' && (dados.id || dados.nome || dados.arquivos)) return [dados];
-
-  // 4) Formato desconhecido
   return [];
 }
 
-/* ---------- IMPORTANTE: Importação múltipla com merge inteligente ---------- */
+/* ---------- Importação múltipla com merge inteligente ---------- */
 async function importarJSONMultiplos(files) {
   const lista = Array.from(files || []).filter(f => f && /\.json$/i.test(f.name));
   if (!lista.length) { toast('Nenhum arquivo .json válido selecionado.', 'error'); return; }
@@ -1407,7 +1396,6 @@ async function importarJSONMultiplos(files) {
       for (const bruto of brutos) {
         const novo = normalizarProcessoImportado(bruto);
 
-        // Anti-colisão de ID do PROCESSO
         const colide = state.processos.some(p => p.id === novo.id);
         if (colide) {
           novo.id = uid('proc');
@@ -1415,7 +1403,6 @@ async function importarJSONMultiplos(files) {
           totalRenomeados++;
         }
 
-        // Anti-colisão de IDs dos ARQUIVOS (por processo)
         const idsArquivosExistentes = new Set(
           state.processos.flatMap(p => p.arquivos.map(a => a.id))
         );
@@ -1447,29 +1434,25 @@ async function importarJSONMultiplos(files) {
     partes.push(`✅ ${totalProcessos} processo(s)`);
     partes.push(`${totalArquivos} arquivo(s)`);
     partes.push(`de ${lista.length} JSON`);
-
-    if (totalRenomeados > 0)  partes.push(`· ${totalRenomeados} renomeado(s) por colisão`);
-    if (totalColisoesArq > 0) partes.push(`· ${totalColisoesArq} ID(s) de arquivo regenerado(s)`);
-    if (falhas.length > 0)    partes.push(`· ${falhas.length} arquivo(s) ignorado(s)`);
+    if (totalRenomeados > 0)  partes.push(`· ${totalRenomeados} renomeado(s)`);
+    if (totalColisoesArq > 0) partes.push(`· ${totalColisoesArq} ID(s) regenerado(s)`);
+    if (falhas.length > 0)    partes.push(`· ${falhas.length} ignorado(s)`);
 
     toast(partes.join(' '), 'ok');
 
-    // Log detalhado no console
     console.info(
       `%cLicitaAudit · Importação múltipla`,
       'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
       { processos: totalProcessos, arquivos: totalArquivos, renomeados: totalRenomeados, colisoesArquivo: totalColisoesArq, falhas }
     );
   } else {
-    toast(`⚠️ Nenhum processo pôde ser importado. Verifique os ${lista.length} arquivo(s) selecionado(s).`, 'error');
+    toast(`⚠️ Nenhum processo pôde ser importado. Verifique os ${lista.length} arquivo(s).`, 'error');
   }
 
-  if (falhas.length) {
-    console.warn('Arquivos com falha na importação:', falhas);
-  }
+  if (falhas.length) console.warn('Arquivos com falha na importação:', falhas);
 }
 
-/* ---------- Wrapper de compatibilidade (importação de 1 arquivo) ---------- */
+/* ---------- Wrapper de compatibilidade ---------- */
 async function importarJSON(file) {
   return importarJSONMultiplos([file]);
 }
@@ -1566,7 +1549,43 @@ function fecharSidebar() {
 }
 
 /* ==========================================================================
- * 19. EVENTOS E BOOTSTRAP
+ * 19. IMPORT JSON — v6.7.1 (input criado dinamicamente)
+ * ======================================================================== */
+function abrirInputJSONMultiplo() {
+  // Cria o <input> em runtime para garantir `multiple = true`
+  // independentemente do HTML ou de comportamento do navegador.
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.multiple = true;                            // ← garantido
+  inp.accept = '.json,application/json,text/plain';
+  inp.style.position = 'fixed';
+  inp.style.left = '-9999px';
+  inp.style.opacity = '0';
+  inp.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(inp);
+
+  const limpar = () => { if (inp.parentNode) inp.parentNode.removeChild(inp); };
+
+  inp.addEventListener('change', async e => {
+    const files = Array.from(e.target.files || []);
+    limpar();
+    if (!files.length) {
+      toast('Nenhum arquivo selecionado.', 'error');
+      return;
+    }
+    if (files.length === 1) {
+      console.info('[LicitaAudit] Apenas 1 arquivo foi detectado no input. Use Ctrl/Cmd+clique para selecionar vários.');
+    }
+    await importarJSONMultiplos(files);
+  });
+
+  inp.addEventListener('cancel', limpar);
+
+  inp.click();
+}
+
+/* ==========================================================================
+ * 20. EVENTOS E BOOTSTRAP
  * ======================================================================== */
 function bindEventosGlobais() {
   els.btnNovoProcesso?.addEventListener('click', () => criarProcesso());
@@ -1576,14 +1595,14 @@ function bindEventosGlobais() {
   els.pdfAllBtn?.addEventListener('click', exportarPDFTodos);
   els.jsonBtn?.addEventListener('click', () => exportarJSON());
 
-  /* ---------- IMPORTAÇÃO MÚLTIPLA ---------- */
-  els.jsonLoadBtn?.addEventListener('click', () => els.jsonLoadInput.click());
+  /* ---------- IMPORTAÇÃO MÚLTIPLA (v6.7.1) ---------- */
+  els.jsonLoadBtn?.addEventListener('click', abrirInputJSONMultiplo);
+
+  // Fallback: input do HTML, se por algum motivo for acionado
   els.jsonLoadInput?.addEventListener('change', async e => {
-    const files = e.target.files;
-    if (files?.length) {
-      await importarJSONMultiplos(files);
-    }
-    e.target.value = ''; // permite reimportar o mesmo arquivo
+    const files = Array.from(e.target.files || []);
+    if (files.length) await importarJSONMultiplos(files);
+    e.target.value = '';
   });
 
   $$('[data-close-modal]').forEach(el => el.addEventListener('click', fecharModal));
@@ -1634,7 +1653,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v6.7 · Importação múltipla de JSON com merge inteligente'
+    '· v6.7.1 · Importação múltipla de JSON (input dinâmico garantido)'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
