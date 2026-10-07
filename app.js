@@ -1,17 +1,20 @@
 /* ============================================================================
- * LicitaAudit · app.js — v7.0
+ * LicitaAudit · app.js — v7.1
  * ----------------------------------------------------------------------------
- * • Matriz Dinâmica Unificada (Modalidade × Natureza × Critério)
- * • Regras N/A rastreadas com justificativa legal
- * • Painel de Perfil da Licitação no workspace
- * • PDF adaptativo e conciso
+ * • Auditoria HÍBRIDA: cruzamento de metadados do processo × conteúdo dos arquivos
+ * • Integração nativa com LicitaReq (parser de blocos + metadados estruturados)
+ * • Notas do auditor por processo (persistidas em JSON e PDFs)
+ * • Modal de Critérios Ativos (regras aplicáveis, N/A e fundamentos)
+ * • Perfil editável por processo (Modalidade, Natureza, Critério)
+ * • PDFs executivos: individual, consolidado e em lote
  * ========================================================================== */
 'use strict';
 
 /* ==========================================================================
- * ESTADO E DOM
+ * 1. ESTADO E DOM
  * ======================================================================== */
 const state = { processos: [], ativo: null };
+
 const $  = (s, c = document) => c.querySelector(s);
 const $$ = (s, c = document) => Array.from(c.querySelectorAll(s));
 
@@ -23,13 +26,14 @@ const els = {
   paramObjeto: $('#paramObjeto'), paramModalidade: $('#paramModalidade'), paramCriterio: $('#paramCriterio'),
   pdfAllBtn: $('#pdfAllBtn'), jsonBtn: $('#jsonBtn'), jsonLoadBtn: $('#jsonLoadBtn'),
   jsonLoadInput: $('#jsonLoadInput'), loader: $('#loader'), loaderText: $('#loaderText'),
-  toast: $('#toast'), modal: $('#modal'), modalTitulo: $('#modalTitulo'),
-  modalBody: $('#modalBody'), sidebar: $('#sidebar'), sidebarToggle: $('#sidebarToggle'),
-  sidebarOverlay: $('#sidebarOverlay'),
+  toast: $('#toast'),
+  modal: $('#modal'), modalTitulo: $('#modalTitulo'), modalBody: $('#modalBody'),
+  modalCriterios: $('#modalCriterios'), modalCriteriosTitulo: $('#modalCriteriosTitulo'), modalCriteriosBody: $('#modalCriteriosBody'),
+  sidebar: $('#sidebar'), sidebarToggle: $('#sidebarToggle'), sidebarOverlay: $('#sidebarOverlay'),
 };
 
 /* ==========================================================================
- * CONSTANTES E UTILITÁRIOS
+ * 2. CONSTANTES E UTILITÁRIOS
  * ======================================================================== */
 const LIMITE_DISPENSA_BENS_SERVICOS = 50000.00;
 const LIMITE_DISPENSA_OBRAS = 100000.00;
@@ -76,7 +80,7 @@ function showLoader(t) { els.loaderText.textContent = t || 'Processando…'; els
 function hideLoader() { els.loader.classList.add('is-hidden'); }
 
 /* ==========================================================================
- * BASE DE CONHECIMENTO
+ * 3. BASE DE CONHECIMENTO
  * ======================================================================== */
 const KB = {
   sinaisModalidade: {
@@ -91,7 +95,7 @@ const KB = {
   orcamento: [/\bestimativa\s+de\s+valor\b/i, /\bvalor\s+(estimado|global|total)\b/i, /R\$\s*[\d.,]+/i],
   alienacao: /aliena[cç][aã]o|venda\s+de\s+bens|inserv[íi]ve(is|l)|desfazimento|maior\s+lance/i,
   emergencia: /emerg[êe]ncial?|emerg[êe]ncia|calamidade|desastre|defesa\s+civil/i,
-  tic: /(\bsoftware\b|cloud|datacenter|licen[cç]a\s+de\s+software|help\s*desk|service\s*desk|consultoria\s+em\s+ti|desenvolvimento\s+de\s+sistema|\berp\b|aplicativo\s+m[óo]vel|nuvem|suporte\s+t[eé]cnico\s+especializado\s+em\s+ti)/i,
+  tic: /(\bsoftware\b|cloud|datacenter|licen[cç]a\s+de\s+software|help\s*desk|service\s*desk|consultoria\s+em\s+ti|desenvolvimento\s+de\s+sistema|\berp\b|aplicativo\s+m[óo]vel|nuvem)/i,
   tiEquipamentos: /(computador(es)?|notebook(s)?|workstation(s)?|desktop(s)?|monitor(es)?|impressora(s)?|scanner(es)?|servidor(es)?|switch(es)?|roteador(es)?|firewall(s)?|nobreak|estabilizador|hd\s+externo|ssd|mem[óo]ria\s+ram|processador|placa\s+de\s+v[íi]deo|mouse|teclado|webcam|tablet(s)?)/i,
   obra: /(obra(s)?|engenharia|reforma|constru[cç][aã]o|pavimenta|saneamento|drenagem|edifica|estrutural)/i,
   tecnicos: /(consultoria|assessoria\s+t[eé]cnica|parecer\s+t[eé]cnico|auditoria|per[íi]cia|laudo|engenharia\s+consultiva)/i,
@@ -104,7 +108,7 @@ const firstMatch = (text, rx) => {
 };
 
 /* ==========================================================================
- * PARSER DE TEXTO
+ * 4. PARSER DE TEXTO — RADICAL-BASED
  * ======================================================================== */
 function extrairModalidade(corpus) {
   const rot = corpus.match(/(?:modalidade\s+(?:de\s+licita[cç][aã]o|licitat[oó]ria|adotada|declarada)|tipo\s+de\s+licita[cç][aã]o)\s*[:\-–—]\s*([^\n\r]{2,80})/i);
@@ -149,7 +153,7 @@ function extrairObjeto(corpus) {
   return { texto, tipo: classificarObjeto(texto) };
 }
 function extrairProcesso(corpus) {
-  const rx = /(processo|pa|prt|protocolo|unitau|edital|memorando|of[íi]cio)[\s\wºnº\.:\/-]*?(\d{3,}[\d\/\.\-]+)/i;
+  const rx = /(processo|pa|prt|protocolo|unitau|edital|memorando|of[íi]cio|requerimento)[\s\wºnº\.:\/-]*?(\d{3,}[\d\/\.\-]+)/i;
   const m = corpus.match(rx);
   if (m && m[2]) {
     const rotulo = m[1].trim();
@@ -163,7 +167,7 @@ function extrairValor(corpus) {
   return m ? parseValorBR(m[1]) : 0;
 }
 function extrairOrgao(corpus) {
-  const m = corpus.match(/\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Secretaria|Funda[cç][aã]o|Autarquia|Departamento|Coordenadoria)[^\n,.;]{0,80}/i);
+  const m = corpus.match(/\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Secretaria|Funda[cç][aã]o|Autarquia|Departamento|Coordenadoria|Diretoria)[^\n,.;]{0,80}/i);
   return m ? m[0].replace(/\s+/g, ' ').trim() : 'ÓRGÃO / ENTIDADE PÚBLICA';
 }
 function extrairCriterio(corpus) {
@@ -181,31 +185,27 @@ function extrairCriterio(corpus) {
 
 /* ---------- Labels legíveis ---------- */
 function labelModalidade(chave) {
-  const m = {
+  return {
     pregao: 'Pregão Eletrônico', concorrencia: 'Concorrência', concurso: 'Concurso',
     leilao: 'Leilão', dialogo: 'Diálogo Competitivo',
     dispensa: 'Dispensa de Licitação', inexigibilidade: 'Inexigibilidade de Licitação',
-  };
-  return m[chave] || 'Não identificada';
+  }[chave] || 'Não identificada';
 }
 function labelNatureza(chave) {
-  const m = {
+  return {
     bens: 'Bens comuns', 'servicos-comuns': 'Serviços comuns',
     'servicos-especiais': 'Serviços especiais', obras: 'Obras e serviços de engenharia',
     intelectual: 'Serviços técnicos intelectuais', alienacao: 'Alienação de bens / Concessão',
-  };
-  return m[chave] || 'Não identificada';
+  }[chave] || 'Não identificada';
 }
 function labelCriterio(chave) {
-  const m = {
+  return {
     'menor-preco': 'Menor preço', 'maior-desconto': 'Maior desconto',
     'melhor-tecnica': 'Melhor técnica ou conteúdo artístico',
     'tecnica-preco': 'Técnica e preço', 'maior-lance': 'Maior lance',
     'maior-retorno': 'Maior retorno econômico',
-  };
-  return m[chave] || 'Indefinido';
+  }[chave] || 'Indefinido';
 }
-
 function classificarNatureza(corpus, forcar = 'auto') {
   if (forcar && forcar !== 'auto') return labelNatureza(forcar);
   const t = corpus || '';
@@ -220,7 +220,7 @@ function classificarNatureza(corpus, forcar = 'auto') {
 function classificarTipoObjeto(meta) {
   const texto = [meta?.objeto?.texto || '', meta?.objetoField || ''].join(' ').toLowerCase();
   const nat   = (meta?.natureza || '').toLowerCase();
-  const eBens = /(aquisi[cç][aã]o\s+de\s+bens|compra\s+de\s+bens|fornecimento\s+de\s+bens|equipament|material\s+de|computador(es)?|notebook(s)?|workstation(s)?|monitor(es)?|impressora(s)?|mobili[aá]rio|ve[ií]culo(s)?|uniforme(s)?|medicament(o|os)|reativo|insumo|material)/i.test(texto);
+  const eBens = /(aquisi[cç][aã]o\s+de\s+bens|compra\s+de\s+bens|fornecimento\s+de\s+bens|equipament|material\s+de|computador(es)?|notebook(s)?|workstation(s)?|monitor(es)?|impressora(s)?|mobili[aá]rio|ve[ií]culo(s)?|uniforme(s)?|medicament(o|os)|reativo|insumo|material|l[aâ]mpada)/i.test(texto);
   const eServicos = /(presta[cç][aã]o\s+de\s+servi|contrata[cç][aã]o\s+de\s+servi|servi[cç]os?\s+de|manuten[cç][aã]o|suporte\s+t[eé]cnico|consultoria|assessoria|treinamento|limpeza|vigil[aâ]ncia)/i.test(texto);
   if (eBens && !eServicos) return 'bens';
   if (eServicos && !eBens) return 'servicos';
@@ -229,7 +229,7 @@ function classificarTipoObjeto(meta) {
   return 'servicos';
 }
 
-/* ---------- Detecção de escopo (para regras condicionais) ---------- */
+/* ---------- Detecção de escopo ---------- */
 function ehObjetoEngenharia(meta, natureza, corpus) {
   const blob = [meta?.objeto?.texto || '', meta?.objeto?.tipo || '', natureza || ''].join(' ');
   if (/(obra|engenharia|reforma|constru[cç][aã]o|pavimenta)/i.test(blob)) return true;
@@ -239,7 +239,7 @@ function ehObjetoBens(c) {
   const tipo = (c.meta?.tipoObjeto || '').toLowerCase();
   const nat = (c.natureza || '').toLowerCase();
   const mod = (c.modalidade?.modalidade || '').toLowerCase();
-  return tipo === 'bens' || /bens|material|equipament|computador|notebook|impressora|insumo|reativo|medicament/i.test(nat) || mod.includes('pregão');
+  return tipo === 'bens' || /bens|material|equipament|computador|notebook|impressora|insumo|reativo|medicament|l[aâ]mpada/i.test(nat) || mod.includes('pregão');
 }
 function ehObjetoAlienacao(c) {
   return /aliena/i.test(c.natureza || '') || /leil[aã]o/i.test(c.modalidade?.modalidade || '');
@@ -261,49 +261,72 @@ function ehObjetoServicoIntelectual(c) {
   return /(intelectual|consultoria|assessoria|parecer\s+t[eé]cnico|auditoria|advocat|jur[íi]dic|not[óo]ria\s+especializa|cient[íi]fic)/i.test(blob);
 }
 
-/* ---------- Validações dinâmicas ---------- */
-function testarCoerenciaModalidade(c) {
-  const mod = (c.modalidade?.modalidade || '').toLowerCase();
-  const nat = (c.natureza || '').toLowerCase();
-  const obj = ((c.meta?.objeto?.texto || '') + ' ' + (c.meta?.objeto?.tipo || '')).toLowerCase();
-  const blob = nat + ' ' + obj;
+/* ==========================================================================
+ * 5. PARSER LICITAREQ — INTEGRAÇÃO NATIVA
+ * --------------------------------------------------------------------------
+ * Detecta arquivos e conteúdo gerados pelo sistema LicitaReq e extrai
+ * metadados estruturados (unidade, processo, valor, objeto, empresa
+ * mencionada, sinais de emergência/inexigibilidade) que serão cruzados
+ * com as regras dos checkpoints.
+ * ======================================================================== */
 
-  if (mod.includes('pregão')) return /bens|comuns|servi[cç]|aquisi[cç]|fornecimento|ti\b|tic\b|tecnologia|equipament|computador|notebook|material|mobili|insumo|reativo/.test(blob);
-  if (mod.includes('concorrência')) return /obra|engenharia|t[eé]cnic|intelectual|especializ|complexid|bens\s+especiais|servi[cç]os\s+especiais/.test(blob);
-  if (mod.includes('leilão')) return /aliena|inserv[íi]vel|desfazimento|venda/.test(blob);
-  if (mod.includes('concurso')) return /art[íi]stic|t[eé]cnic|intelectual|projeto|criativ|cient[íi]fic/.test(blob);
-  if (mod.includes('diálogo')) return /inova[cç][aã]o|complexid|tecnolog|especial|contrata[cç][aã]o\s+inovadora/.test(blob);
-  return true;
-}
-function testarCriterioCompativel(c) {
-  const crit = (c.criterio || '').toLowerCase();
-  const mod = (c.modalidade?.modalidade || '').toLowerCase();
-  const blob = [(c.natureza || ''), (c.meta?.objeto?.texto || '')].join(' ').toLowerCase();
-  if (!crit || crit === 'indefinido') return false;
-  if (mod.includes('leilão') && crit !== 'maior-lance') return false;
-  if (mod.includes('concurso') && !/melhor-tecnica|tecnica-preco/.test(crit)) return false;
-  if (/intelectual/.test(blob) && !/melhor-tecnica|tecnica-preco/.test(crit)) return false;
-  if (/bens\s+comuns/.test(blob) && !/menor-preco|maior-desconto|maior-retorno/.test(crit)) return false;
-  return true;
-}
-function testarPrazoMinimo(c) {
-  const mod = (c.modalidade?.modalidade || '').toLowerCase();
-  const tipo = c.meta?.tipoObjeto || '';
-  const corpus = c.corpus;
+const LICITAREQ_SIGNATURES = [
+  /licitareq/i,
+  /requerimento[_\s-]*licitareq/i,
+  /despacho[_\s-]*triagem/i,
+  /motor\s+de\s+regras\s+—\s+lei\s+n[º°]?\s*14\.?133/i,
+  /documento\s+gerado\s+eletronicamente\s+pelo\s+sistema\s+licitareq/i,
+];
 
-  if (mod.includes('pregão')) {
-    if (tipo === 'bens') return /(8\s*\(?[oO]ito\)?|oito\s+dias|8\s+dias\s+[uú]teis|art\.?\s*55)/i.test(corpus);
-    if (tipo === 'servicos') return /(10\s+dias|dez\s+dias)/i.test(corpus);
-  }
-  if (mod.includes('concorrência')) return /(35\s+dias|trinta\s+e\s+cinco)/i.test(corpus);
-  if (mod.includes('leilão')) return /(15\s+dias|quinze\s+dias)/i.test(corpus);
-  if (mod.includes('concurso')) return /(45\s+dias|quarenta\s+e\s+cinco)/i.test(corpus);
-  if (mod.includes('diálogo')) return /(10\s+dias|dez\s+dias)/i.test(corpus);
-  return /(\d+\s+dias|prazo)/i.test(corpus);
+const LICITAREQ_KEYWORDS = {
+  unidade:    /(?:unidade\s+requisitante|setor\s+requisitante|remetente|origem)\s*[:\-–—]\s*([^\n]{3,90})/i,
+  processo:   /(memorando|of[íi]cio|processo|requerimento|expediente|dfd|documento\s+de\s+formaliza)/i,
+  valor:      /R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i,
+  objeto:     /(?:objeto|assunto)\s*[:\-–—]\s*([^\n]{6,200})/i,
+  objetoFull: /(?:objeto|assunto)\s*[:\-–—]\s*([\s\S]{6,600}?)(?=\n\s*\n|\n\s*\d+\.|\n\s*---|$)/i,
+  emergencia: /(emerg[êe]ncial?|calamidade|desastre|risco\s+iminente|paralisa[çc][ãa]o)/i,
+  inexigib:   /(inexigibilidade|not[óo]ria\s+especializa|exclusividade|inviabilidade\s+de\s+competi)/i,
+  direc:      /(?:empresa|fornecedor|contrata[çc][aã]o\s+d[aeo]|junto\s+[àa])\s+([A-ZÀ-Ú][\wÀ-ú&.'-]*(?:\s+(?:[A-ZÀ-Ú][\wÀ-ú&.'-]*|de|da|do|e)){0,6}(?:\s+(?:Ltda\.?|S\.A\.?|ME|EIRELI|EPP))?)/i,
+};
+
+function ehArquivoLicitaReq(nomeArquivo, texto = '') {
+  if (LICITAREQ_SIGNATURES.some(rx => rx.test(nomeArquivo))) return true;
+  if (!texto) return false;
+  return LICITAREQ_SIGNATURES.some(rx => rx.test(texto));
+}
+
+function parseLicitaReq(texto) {
+  const out = {
+    licitareq: true,
+    unidade: '', processo: '', valorTexto: '', valor: 0,
+    objeto: '', empresa: '',
+    emergencia: false, inexigibilidade: false,
+    rawBlocos: {},
+  };
+
+  const mU = texto.match(LICITAREQ_KEYWORDS.unidade);
+  if (mU) out.unidade = mU[1].trim().slice(0, 120);
+
+  const mP = texto.match(/(memorando|of[íi]cio|processo|requerimento|expediente|dfd|documento\s+de\s+formaliza[çc][aã]o)\s*(?:n[º°.]?|n[úu]mero)?\s*([\d][\d.\/\-\w]*)/i);
+  if (mP) out.processo = `${mP[1]} nº ${mP[2]}`.replace(/\s+/g, ' ').slice(0, 80);
+
+  const mV = texto.match(LICITAREQ_KEYWORDS.valor);
+  if (mV) { out.valorTexto = `R$ ${mV[1]}`; out.valor = parseValorBR(mV[1]); }
+
+  const mO = texto.match(LICITAREQ_KEYWORDS.objetoFull) || texto.match(LICITAREQ_KEYWORDS.objeto);
+  if (mO) out.objeto = mO[1].replace(/\s+/g, ' ').trim().slice(0, 220);
+
+  const mD = texto.match(LICITAREQ_KEYWORDS.direc);
+  if (mD) out.empresa = mD[1].trim().slice(0, 100);
+
+  out.emergencia = LICITAREQ_KEYWORDS.emergencia.test(texto);
+  out.inexigibilidade = LICITAREQ_KEYWORDS.inexigib.test(texto);
+
+  return out;
 }
 
 /* ==========================================================================
- * MATRIZ UNIFICADA — 30 CHECKPOINTS DINÂMICOS (Lei nº 14.133/2021)
+ * 6. MATRIZ UNIFICADA — 30 CHECKPOINTS DINÂMICOS
  * ======================================================================== */
 const BLOCO_TITULO = {
   1: 'Planejamento e Justificativa',
@@ -314,28 +337,44 @@ const BLOCO_TITULO = {
   6: 'Fiscalização e Execução',
 };
 
+/* ---------------------------------------------------------------------------
+ * Cruzamento híbrido: cada regra pode usar:
+ *   - c.corpus         → conteúdo bruto dos arquivos
+ *   - c.meta           → metadados extraídos (objeto, valor, processo, etc.)
+ *   - c.modalidade     → modalidade declarada (select) ou detectada
+ *   - c.natureza       → natureza (select) ou detectada
+ *   - c.criterio       → critério (select) ou detectado
+ *   - c.licitareq      → dados estruturados extraídos de arquivo LicitaReq (ou null)
+ *   - c.contrato       → objeto de metadados do processo
+ * ------------------------------------------------------------------------ */
 const MATRIZ_CORE_30 = [
   /* ============ BLOCO 1 — PLANEJAMENTO ============ */
   { id:'B1_01', bloco:1, nome:'Justificativa da necessidade', fundamento:'Art. 18, §1º, I', severidade:'CRITICA',
     aplicavel: () => true,
-    test: c => /\b(justific|motiva|necessidade|interesse\s+p[uú]blico|finalidade)/i.test(c.corpus),
+    test: c => {
+      const corpus = c.corpus;
+      const lr = c.licitareq;
+      return /\b(justific|motiva|necessidade|interesse\s+p[uú]blico|finalidade)/i.test(corpus)
+          || !!(lr && /(justific|necessidade|interesse)/i.test(lr.objeto || ''));
+    },
     mensagemFalha:'Justificativa não identificada.', recomendacao:'Elaborar seção com motivação fática e jurídica.' },
 
   { id:'B1_02', bloco:1, nome:'Descrição clara do objeto', fundamento:'Art. 18, §1º, II', severidade:'CRITICA',
     aplicavel: () => true,
     test: c => {
       const tipo = c.meta.objeto.tipo || '';
+      const lrObjeto = c.licitareq?.objeto || '';
       const chave = /(aquisi[cç][aã]o|fornecimento|presta[cç][aã]o|servi[çc]o|bem|material|equipament|software|obra|produto|insumo)/i.test(c.corpus);
-      return tipo !== 'Não identificado' || chave;
+      return tipo !== 'Não identificado' || chave || lrObjeto.length > 15;
     },
     mensagemFalha:'Objeto insuficiente ou ambíguo.', recomendacao:'Descrever com especificações técnicas precisas.' },
 
   { id:'B1_03', bloco:1, nome:'Estimativa de quantitativos', fundamento:'Art. 18, §1º, III', severidade:'MEDIA',
     aplicavel: () => true,
-    test: c => /(quantidade|qtd|\blotes?\b|\d+\s*(unid|un|pç|pc|cx|kg|l|m²|m³|resma|itens?)|\(\s*\d+\s*\)|\d+\s*\()/i.test(c.corpus),
+    test: c => /(quantidade|qtd|\blotes?\b|\d+\s*(unid|un|pç|pc|cx|kg|l|m²|m³|resma|itens?)|\(\s*\d+\s*\))/i.test(c.corpus),
     mensagemFalha:'Quantitativos não explicitados.', recomendacao:'Apresentar planilha quantitativa.' },
 
-  { id:'B1_04', bloco:1, nome:'ETP ou Termo de Referência', fundamento:'Art. 6º, XXIII e XXV · Art. 18, §1º', severidade:'CRITICA',
+  { id:'B1_04', bloco:1, nome:'ETP ou Termo de Referência', fundamento:'Art. 6º, XXIII e XXV', severidade:'CRITICA',
     aplicavel: () => true,
     test: c => /(estudo\s+t[eé]cnico\s+preliminar|\bETP\b|termo\s+de\s+refer[eê]ncia|\bTR\b|projeto\s+b[aá]sico|\bPB\b|anteprojeto)/i.test(c.corpus),
     mensagemFalha:'Documento estruturante ausente.', recomendacao:'Anexar ETP e TR (ou Projeto Básico).' },
@@ -346,15 +385,25 @@ const MATRIZ_CORE_30 = [
     test: c => /(parcelament|divis[aã]o\s+em\s+lotes|indivis[íi]vel|lote\s+[uú]nico|n[aã]o\s+parcel)/i.test(c.corpus),
     mensagemFalha:'Sem decisão sobre parcelamento.', recomendacao:'Motivar parcelamento ou indivisibilidade (Art. 47).' },
 
+  { id:'B1_06', bloco:1, nome:'Formalização da demanda (LicitaReq)', fundamento:'Art. 18, §§1º e 2º', severidade:'MEDIA',
+    aplicavel: () => true,
+    test: c => {
+      const corpus = c.corpus;
+      const arquivoLR = c.arquivo?.licitareq;
+      return arquivoLR || /(documento\s+de\s+formaliza[çc][aã]o\s+de\s+demanda|\bDFD\b|memorando\s+n|requerimento)/i.test(corpus);
+    },
+    mensagemFalha:'Formalização da demanda não identificada.',
+    recomendacao:'Anexar DFD, Memorando ou Requerimento formalizando a demanda (Art. 18, §§1º e 2º).' },
+
   /* ============ BLOCO 2 — RECURSOS ============ */
   { id:'B2_01', bloco:2, nome:'Estimativa de valor', fundamento:'Art. 23', severidade:'CRITICA',
     aplicavel: () => true,
-    test: c => c.meta.valor > 0 || firstMatch(c.corpus, KB.orcamento),
+    test: c => c.meta.valor > 0 || firstMatch(c.corpus, KB.orcamento) || !!(c.licitareq?.valor > 0),
     mensagemFalha:'Estimativa de valor ausente.', recomendacao:'Elaborar planilha orçamentária com múltiplas fontes.' },
 
   { id:'B2_02', bloco:2, nome:'Dotação orçamentária', fundamento:'Art. 18, §1º, V · Art. 150', severidade:'CRITICA',
     aplicavel: () => true,
-    test: c => /(dota[cç][aã]o|programa\s+de\s+trabalho|natureza\s+de\s+despesa|fonte\s+de\s+recurso)/i.test(c.corpus),
+    test: c => /(dota[cç][aã]o|programa\s+de\s+trabalho|natureza\s+de\s+despesa|fonte\s+de\s+recurso|previs[aã]o\s+or[cç]ament)/i.test(c.corpus),
     mensagemFalha:'Dotação não indicada.', recomendacao:'Indicar dotação, programa e natureza de despesa.' },
 
   { id:'B2_03', bloco:2, nome:'Adequação orçamentária', fundamento:'Art. 150', severidade:'MEDIA',
@@ -368,8 +417,9 @@ const MATRIZ_CORE_30 = [
     test: c => {
       const obra = ehObjetoEngenharia(c.meta, c.natureza, c.corpus);
       const lim = obra ? LIMITE_DISPENSA_OBRAS : LIMITE_DISPENSA_BENS_SERVICOS;
-      if (!c.meta.valor || c.meta.valor <= 0) return false;
-      return c.meta.valor <= lim;
+      const valor = c.meta.valor || (c.licitareq?.valor ?? 0);
+      if (!valor || valor <= 0) return false;
+      return valor <= lim;
     },
     mensagemFalha:'Valor acima do teto para dispensa.', recomendacao:'Reclassificar modalidade ou revisar valor.' },
 
@@ -381,15 +431,16 @@ const MATRIZ_CORE_30 = [
 
   /* ============ BLOCO 3 — VEDAÇÕES ============ */
   { id:'B3_01', bloco:3, nome:'Vedação a direcionamento de marca', fundamento:'Art. 41, I', severidade:'CRITICA',
-    aplicavel: c => ehObjetoBens(c),
+    aplicavel: c => ehObjetoBens(c) || !!c.licitareq,
     motivoNA: 'Vedação específica para aquisição de bens (Art. 41, I).',
     test: c => {
-      const vA = /(vedad[ao]|proibid[ao]|sem|aus[êe]ncia)\s+.{0,80}?\b(marca|modelo|fabricante)\b/i.test(c.corpus);
-      const vB = /(marca\s+exclusiva|indica[cç][aã]o\s+de\s+marca).{0,80}?\b(vedad[ao]|proibid[ao])/i.test(c.corpus);
+      const corpus = c.corpus;
+      const vA = /(vedad[ao]|proibid[ao]|sem|aus[êe]ncia)\s+.{0,80}?\b(marca|modelo|fabricante)\b/i.test(corpus);
+      const vB = /(marca\s+exclusiva|indica[cç][aã]o\s+de\s+marca).{0,80}?\b(vedad[ao]|proibid[ao])/i.test(corpus);
       if (vA || vB) return true;
-      const temMarca = /\b(marca|modelo|fabricante)\s*[:\-]\s*[A-ZÀ-Ú][\w-]{1,30}/i.test(c.corpus);
+      const temMarca = /\b(marca|modelo|fabricante)\s*[:\-]\s*[A-ZÀ-Ú][\w-]{1,30}/i.test(corpus);
       if (!temMarca) return true;
-      return /(padroniza|carta\s+de\s+exclusividade|justificativa\s+t[eé]cnica)/i.test(c.corpus);
+      return /(padroniza|carta\s+de\s+exclusividade|justificativa\s+t[eé]cnica|not[óo]ria\s+especializa)/i.test(corpus);
     },
     mensagemFalha:'Indicação de marca sem justificativa.', recomendacao:'Vedar indicação de marca OU justificar padronização (Art. 41, I).' },
 
@@ -405,7 +456,7 @@ const MATRIZ_CORE_30 = [
 
   { id:'B3_04', bloco:3, nome:'Declaração sobre trabalho infantil', fundamento:'Art. 68, VI', severidade:'MEDIA',
     aplicavel: () => true,
-    test: c => /(infantil|menor(?:es)?\s+de\s+18|trabalho\s+noturno|perigoso|art\.?\s*68)/i.test(c.corpus),
+    test: c => /(infantil|menor(?:es)?\s+de\s+18|trabalho\s+noturno|perigoso|art\.?\s*68|n[aã]o\s+emprego\s+de\s+menores)/i.test(c.corpus),
     mensagemFalha:'Sem declaração sobre trabalho infantil.', recomendacao:'Exigir declaração de não emprego de menores (Art. 68, VI).' },
 
   { id:'B3_05', bloco:3, nome:'Qualificação técnica e vistoria', fundamento:'Arts. 63 e 67', severidade:'MEDIA',
@@ -421,24 +472,43 @@ const MATRIZ_CORE_30 = [
   /* ============ BLOCO 4 — MODALIDADE (dinâmico) ============ */
   { id:'B4_01', bloco:4, nome:'Coerência modalidade × natureza', fundamento:'Art. 6º, XLI · Arts. 28 a 32', severidade:'CRITICA',
     aplicavel: () => true,
-    test: c => testarCoerenciaModalidade(c),
-    mensagemFalha:'Modalidade incompatível com o objeto.',
-    recomendacao:'Reavaliar modalidade (Arts. 28 a 32).' },
+    test: c => {
+      const mod = (c.modalidade?.modalidade || '').toLowerCase();
+      const nat = (c.natureza || '').toLowerCase();
+      const obj = ((c.meta?.objeto?.texto || '') + ' ' + (c.meta?.objeto?.tipo || '')).toLowerCase();
+      const blob = nat + ' ' + obj;
+      if (mod.includes('pregão')) return /bens|comuns|servi[cç]|aquisi[cç]|fornecimento|ti\b|tic\b|equipament|computador|notebook|material|mobili|insumo|reativo|l[aâ]mpada/.test(blob);
+      if (mod.includes('concorrência')) return /obra|engenharia|t[eé]cnic|intelectual|especializ|complexid/.test(blob);
+      if (mod.includes('leilão')) return /aliena|inserv[íi]vel|desfazimento/.test(blob);
+      if (mod.includes('concurso')) return /art[íi]stic|t[eé]cnic|intelectual|projeto|criativ/.test(blob);
+      if (mod.includes('diálogo')) return /inova[cç][aã]o|complexid|tecnolog|especial/.test(blob);
+      return true;
+    },
+    mensagemFalha:'Modalidade incompatível.', recomendacao:'Reavaliar modalidade (Arts. 28 a 32).' },
 
-  { id:'B4_02', bloco:4, nome:'Critério de julgamento compatível', fundamento:'Art. 33 e §§', severidade:'CRITICA',
+  { id:'B4_02', bloco:4, nome:'Critério de julgamento compatível', fundamento:'Art. 33', severidade:'CRITICA',
     aplicavel: () => true,
-    test: c => testarCriterioCompativel(c),
-    mensagemFalha:'Critério incompatível ou não declarado.',
-    recomendacao:'Declarar critério compatível (Art. 33) com o tipo de objeto.' },
+    test: c => {
+      const crit = (c.criterio || '').toLowerCase();
+      const mod = (c.modalidade?.modalidade || '').toLowerCase();
+      const blob = [(c.natureza || ''), (c.meta?.objeto?.texto || '')].join(' ').toLowerCase();
+      if (!crit || crit === 'indefinido') return false;
+      if (mod.includes('leilão') && crit !== 'maior-lance') return false;
+      if (mod.includes('concurso') && !/melhor-tecnica|tecnica-preco/.test(crit)) return false;
+      if (/intelectual/.test(blob) && !/melhor-tecnica|tecnica-preco/.test(crit)) return false;
+      if (/bens\s+comuns/.test(blob) && !/menor-preco|maior-desconto|maior-retorno/.test(crit)) return false;
+      return true;
+    },
+    mensagemFalha:'Critério incompatível ou não declarado.', recomendacao:'Declarar critério compatível (Art. 33).' },
 
-  { id:'B4_03', bloco:4, nome:'Rito específico (Concurso / Leilão / Diálogo)', fundamento:'Arts. 30 a 32', severidade:'MEDIA',
+  { id:'B4_03', bloco:4, nome:'Rito específico (Concurso/Leilão/Diálogo)', fundamento:'Arts. 30 a 32', severidade:'MEDIA',
     aplicavel: c => ehObjetoConcurso(c) || ehObjetoAlienacao(c) || ehObjetoDialogo(c),
     motivoNA: 'Regra aplicável apenas a Concurso, Leilão e Diálogo Competitivo.',
     test: c => {
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
-      if (mod.includes('leilão'))    return /(maior\s+lance|leiloeiro|edital\s+de\s+leil[aã]o)/i.test(c.corpus);
-      if (mod.includes('concurso'))  return /(comiss[aã]o|julgadora|banca|concurso)/i.test(c.corpus);
-      if (mod.includes('diálogo'))   return /(comiss[aã]o|di[aá]logo|fase\s+de\s+di[aá]logo)/i.test(c.corpus);
+      if (mod.includes('leilão'))   return /(maior\s+lance|leiloeiro|edital\s+de\s+leil[aã]o)/i.test(c.corpus);
+      if (mod.includes('concurso')) return /(comiss[aã]o|julgadora|banca|concurso)/i.test(c.corpus);
+      if (mod.includes('diálogo'))  return /(comiss[aã]o|di[aá]logo|fase\s+de\s+di[aá]logo)/i.test(c.corpus);
       return true;
     },
     mensagemFalha:'Rito específico não caracterizado.', recomendacao:'Documentar rito conforme Arts. 30 a 32.' },
@@ -448,7 +518,7 @@ const MATRIZ_CORE_30 = [
     motivoNA: 'Regra restrita às hipóteses de contratação direta (Arts. 74 e 75).',
     test: c => {
       if (ehObjetoInexigibilidade(c)) {
-        return /(inviabilidade\s+de\s+competi|exclusividade|not[oó]ria\s+especializa|art\.?\s*74)/i.test(c.corpus);
+        return /(inviabilidade\s+de\s+competi|exclusividade|not[óo]ria\s+especializa|art\.?\s*74)/i.test(c.corpus);
       }
       if (ehObjetoDispensa(c)) {
         const emerg = KB.emergencia.test(c.corpus);
@@ -470,7 +540,20 @@ const MATRIZ_CORE_30 = [
   /* ============ BLOCO 5 — PRAZOS ============ */
   { id:'B5_01', bloco:5, nome:'Prazo mínimo de publicidade', fundamento:'Art. 55', severidade:'CRITICA',
     aplicavel: () => true,
-    test: c => testarPrazoMinimo(c),
+    test: c => {
+      const mod = (c.modalidade?.modalidade || '').toLowerCase();
+      const tipo = c.meta?.tipoObjeto || '';
+      const corpus = c.corpus;
+      if (mod.includes('pregão')) {
+        if (tipo === 'bens') return /(8\s*\(?[oO]ito\)?|oito\s+dias|8\s+dias\s+[uú]teis|art\.?\s*55)/i.test(corpus);
+        if (tipo === 'servicos') return /(10\s+dias|dez\s+dias)/i.test(corpus);
+      }
+      if (mod.includes('concorrência')) return /(35\s+dias|trinta\s+e\s+cinco)/i.test(corpus);
+      if (mod.includes('leilão')) return /(15\s+dias|quinze\s+dias)/i.test(corpus);
+      if (mod.includes('concurso')) return /(45\s+dias|quarenta\s+e\s+cinco)/i.test(corpus);
+      if (mod.includes('diálogo')) return /(10\s+dias|dez\s+dias)/i.test(corpus);
+      return /(\d+\s+dias|prazo)/i.test(corpus);
+    },
     mensagemFalha:'Prazo mínimo legal não identificado.',
     recomendacao:'Observar prazos do Art. 55 (8/10/15/35/45 dias conforme o rito).' },
 
@@ -527,25 +610,21 @@ const MATRIZ_CORE_30 = [
 
   { id:'B6_05', bloco:6, nome:'Sanções administrativas', fundamento:'Art. 155', severidade:'MEDIA',
     aplicavel: () => true,
-    test: c => /(san[cç][ões]+\s+administrativas|multa|advert[êe]ncia|impedimento\s+de\s+contratar)/i.test(c.corpus),
+    test: c => /(san[cç][õo]es\s+administrativas|multa|advert[êe]ncia|impedimento\s+de\s+contratar)/i.test(c.corpus),
     mensagemFalha:'Sanções não previstas.', recomendacao:'Prever sanções graduadas do Art. 155.' },
 ];
 
 /* ==========================================================================
- * MOTOR DE AVALIAÇÃO
+ * 7. MOTOR DE AVALIAÇÃO (HÍBRIDO)
  * ======================================================================== */
-function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio) {
-  const ctx = { corpus, meta, natureza, modalidade, criterio };
+function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio, licitareq = null, arquivoRef = null) {
+  const ctx = { corpus, meta, natureza, modalidade, criterio, licitareq, arquivo: arquivoRef };
 
   const resultados = MATRIZ_CORE_30.map((regra) => {
     let aplicavel = false;
     try { aplicavel = !!regra.aplicavel(ctx); } catch (_) { aplicavel = true; }
     if (!aplicavel) {
-      return {
-        ...regra, peso: PESOS[regra.severidade],
-        aplicavel: false, conforme: null, status: 'N/A',
-        motivoNA: regra.motivoNA || 'Regra não aplicável à combinação declarada.'
-      };
+      return { ...regra, peso: PESOS[regra.severidade], aplicavel: false, conforme: null, status: 'N/A', motivoNA: regra.motivoNA || 'Regra não aplicável à combinação declarada.' };
     }
     let conforme = false;
     try { conforme = !!regra.test(ctx); } catch (_) { conforme = false; }
@@ -556,6 +635,7 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio) 
   const pesoTotal  = aplicaveis.reduce((s, r) => s + r.peso, 0);
   const pesoFalha  = aplicaveis.filter(r => !r.conforme).reduce((s, r) => s + r.peso, 0);
   const score = pesoTotal > 0 ? Math.max(0, Math.round((100 - (pesoFalha / pesoTotal) * 100) * 10) / 10) : 100;
+
   const criticas = aplicaveis.filter(r => !r.conforme && r.severidade === 'CRITICA').length;
   const medias   = aplicaveis.filter(r => !r.conforme && r.severidade === 'MEDIA').length;
   const baixas   = aplicaveis.filter(r => !r.conforme && r.severidade === 'BAIXA').length;
@@ -629,33 +709,33 @@ function nivelConformidade(pct) {
   return 'alto';
 }
 
-/* ---------- Perfil do processo (agregação) ---------- */
-function getPerfilProcesso(processo) {
-  const arquivosOk = processo.arquivos.filter(a => a.status === 'ok' && a.identificacao);
-  const primeiro = arquivosOk[0];
-  const pm = els.paramModalidade?.value, pn = els.paramObjeto?.value, pc = els.paramCriterio?.value;
-
-  return {
-    modalidade: (pm && pm !== 'auto') ? labelModalidade(pm) : (primeiro?.identificacao?.modalidade || 'Não identificada'),
-    natureza:   (pn && pn !== 'auto') ? labelNatureza(pn)   : (primeiro?.identificacao?.natureza   || 'Não identificada'),
-    criterio:   (pc && pc !== 'auto') ? labelCriterio(pc)   : (primeiro?.identificacao?.criterio   || 'indefinido'),
-    orgao: primeiro?.identificacao?.orgao || '—',
-    processo: primeiro?.identificacao?.processo || '—',
-    objeto: primeiro?.identificacao?.objeto || '—',
-    _auto: { modalidade: !pm || pm === 'auto', natureza: !pn || pn === 'auto', criterio: !pc || pc === 'auto' }
-  };
-}
-
 /* ==========================================================================
- * ANÁLISE INDIVIDUAL
+ * 8. ANÁLISE INDIVIDUAL — HÍBRIDA (arquivo + metadados do processo)
  * ======================================================================== */
 function analisarTextoIndividual(corpus, opts = {}) {
+  const nomeArquivo = opts.nomeArquivo || '';
+  const licitareq = ehArquivoLicitaReq(nomeArquivo, corpus) ? parseLicitaReq(corpus) : null;
+
   const metaBase = {
-    modalidade: extrairModalidade(corpus), objeto: extrairObjeto(corpus),
-    valor: extrairValor(corpus), processo: extrairProcesso(corpus),
-    orgao: extrairOrgao(corpus),
-    empresa: corpus.match(KB.empresa)?.[0]?.trim() || null,
+    modalidade: extrairModalidade(corpus),
+    objeto:     extrairObjeto(corpus),
+    valor:      extrairValor(corpus),
+    processo:   extrairProcesso(corpus),
+    orgao:      extrairOrgao(corpus),
+    empresa:    corpus.match(KB.empresa)?.[0]?.trim() || licitareq?.empresa || null,
   };
+
+  /* Enriquecimento por LicitaReq */
+  if (licitareq) {
+    if (!metaBase.processo || metaBase.processo === 'Não identificado') metaBase.processo = licitareq.processo || 'Não identificado';
+    if (!metaBase.valor && licitareq.valor) metaBase.valor = licitareq.valor;
+    if (!metaBase.objeto.texto && licitareq.objeto) {
+      metaBase.objeto.texto = licitareq.objeto;
+      metaBase.objeto.tipo = classificarObjeto(licitareq.objeto);
+    }
+  }
+
+  /* Cruzamento: parâmetros declarados no processo têm precedência */
   const naturezaBase = classificarNatureza(corpus, opts.paramObjeto || 'auto');
   const modalidadeLabel = (opts.paramModalidade && opts.paramModalidade !== 'auto')
     ? labelModalidade(opts.paramModalidade)
@@ -663,16 +743,22 @@ function analisarTextoIndividual(corpus, opts = {}) {
   const criterio = (opts.paramCriterio && opts.paramCriterio !== 'auto')
     ? opts.paramCriterio
     : extrairCriterio(corpus);
+
   const tipoObjeto = classificarTipoObjeto({ objeto: metaBase.objeto, natureza: naturezaBase });
   const meta = { ...metaBase, natureza: naturezaBase, modalidade: modalidadeLabel, criterio, tipoObjeto };
 
-  const auditoria = executarAuditoriaArquivo(corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio);
+  const auditoria = executarAuditoriaArquivo(
+    corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio,
+    licitareq, { licitareq: !!licitareq, nome: nomeArquivo }
+  );
+
   const objetoExibicao = (meta.objeto.texto && meta.objeto.texto.trim().length >= 5
     ? meta.objeto.texto.trim().slice(0, 200)
     : meta.objeto.tipo || 'Não identificado');
 
   return {
     score: auditoria.score, risco: auditoria.risco,
+    licitareq,
     identificacao: {
       objeto: objetoExibicao, objetoTipo: meta.objeto.tipo,
       modalidade: meta.modalidade, natureza: meta.natureza, criterio,
@@ -697,7 +783,7 @@ function analisarTextoIndividual(corpus, opts = {}) {
 }
 
 /* ==========================================================================
- * EXTRAÇÃO DE TEXTO (PDF/DOCX/TXT)
+ * 9. EXTRAÇÃO DE TEXTO
  * ======================================================================== */
 function configurePdfWorker() {
   if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -740,13 +826,21 @@ async function extractFileText(file) {
 }
 
 /* ==========================================================================
- * CRUD
+ * 10. CRUD DE PROCESSOS
  * ======================================================================== */
 function criarProcesso(nome) {
   const proc = {
-    id: uid('proc'), nome: nome || `Processo ${state.processos.length + 1}`,
+    id: uid('proc'),
+    nome: nome || `Processo ${state.processos.length + 1}`,
     cor: CORES_PRESET[state.processos.length % CORES_PRESET.length],
-    tags: [], arquivos: [], criadoEm: new Date().toISOString(),
+    tags: [], arquivos: [],
+    notas: '',
+    metadados: {
+      modalidade: 'auto',
+      natureza: 'auto',
+      criterio: 'auto',
+    },
+    criadoEm: new Date().toISOString(),
   };
   state.processos.push(proc);
   state.ativo = proc.id;
@@ -762,24 +856,83 @@ function excluirProcesso(procId) {
 }
 function getProcessoAtivo() { return state.processos.find(p => p.id === state.ativo) || null; }
 
+/* ---------- Perfil do processo (com overrides) ---------- */
+function getPerfilProcesso(processo) {
+  const arquivosOk = processo.arquivos.filter(a => a.status === 'ok' && a.identificacao);
+  const primeiro = arquivosOk[0];
+
+  const overrideMod = processo.metadados?.modalidade;
+  const overrideNat = processo.metadados?.natureza;
+  const overrideCri = processo.metadados?.criterio;
+
+  const globalMod = els.paramModalidade?.value;
+  const globalNat = els.paramObjeto?.value;
+  const globalCri = els.paramCriterio?.value;
+
+  const modFinal = (overrideMod && overrideMod !== 'auto') ? overrideMod
+    : (globalMod && globalMod !== 'auto') ? globalMod
+    : null;
+  const natFinal = (overrideNat && overrideNat !== 'auto') ? overrideNat
+    : (globalNat && globalNat !== 'auto') ? globalNat
+    : null;
+  const criFinal = (overrideCri && overrideCri !== 'auto') ? overrideCri
+    : (globalCri && globalCri !== 'auto') ? globalCri
+    : null;
+
+  return {
+    modalidade: modFinal ? labelModalidade(modFinal) : (primeiro?.identificacao?.modalidade || 'Não identificada'),
+    natureza:   natFinal ? labelNatureza(natFinal)   : (primeiro?.identificacao?.natureza   || 'Não identificada'),
+    criterio:   criFinal ? criFinal : (primeiro?.identificacao?.criterio || 'indefinido'),
+    orgao: primeiro?.identificacao?.orgao || '—',
+    processo: primeiro?.identificacao?.processo || '—',
+    objeto: primeiro?.identificacao?.objeto || '—',
+    _override: {
+      modalidade: overrideMod || 'auto',
+      natureza: overrideNat || 'auto',
+      criterio: overrideCri || 'auto',
+    },
+    _auto: {
+      modalidade: !modFinal,
+      natureza: !natFinal,
+      criterio: !criFinal,
+    },
+  };
+}
+
 /* ==========================================================================
- * ADIÇÃO DE ARQUIVOS
+ * 11. ADIÇÃO DE ARQUIVOS
  * ======================================================================== */
 async function adicionarArquivos(procId, fileList) {
   const p = state.processos.find(x => x.id === procId);
   if (!p) return;
   const files = Array.from(fileList).filter(Boolean);
   if (!files.length) return;
+
   showLoader('Extraindo e analisando…');
-  const paramObjeto = els.paramObjeto.value, paramModalidade = els.paramModalidade.value, paramCriterio = els.paramCriterio.value;
+  const perfis = getPerfilProcesso(p);
+  const paramObjeto     = p.metadados?.natureza  !== 'auto' ? p.metadados.natureza  : els.paramObjeto.value;
+  const paramModalidade = p.metadados?.modalidade !== 'auto' ? p.metadados.modalidade : els.paramModalidade.value;
+  const paramCriterio   = p.metadados?.criterio   !== 'auto' ? p.metadados.criterio   : els.paramCriterio.value;
+
   for (const file of files) {
-    const entry = { id: uid('arq'), nomeArquivo: file.name, ext: extOf(file.name), tamanho: file.size, texto: '', status: 'loading', erro: null, _ref: file };
+    const isLR = ehArquivoLicitaReq(file.name, '');
+    const entry = {
+      id: uid('arq'), nomeArquivo: file.name, ext: extOf(file.name),
+      tamanho: file.size, texto: '', status: 'loading', erro: null,
+      licitareq: false, _ref: file,
+    };
     p.arquivos.push(entry);
     renderWorkspace();
+
     try {
       entry.texto = await extractFileText(entry._ref);
       entry.status = 'ok';
-      Object.assign(entry, analisarTextoIndividual(entry.texto, { paramObjeto, paramModalidade, paramCriterio }));
+      const res = analisarTextoIndividual(entry.texto, {
+        paramObjeto, paramModalidade, paramCriterio,
+        nomeArquivo: file.name,
+      });
+      Object.assign(entry, res);
+      entry.licitareq = !!res.licitareq;
     } catch (err) {
       entry.status = 'erro';
       entry.erro = err.message || 'Erro ao processar.';
@@ -789,7 +942,11 @@ async function adicionarArquivos(procId, fileList) {
     }
   }
   hideLoader();
-  toast(`${files.length} arquivo(s) adicionado(s).`, 'ok');
+  const lrCount = files.filter(f => ehArquivoLicitaReq(f.name)).length;
+  const msg = lrCount > 0
+    ? `${files.length} arquivo(s) adicionado(s) — ${lrCount} do LicitaReq.`
+    : `${files.length} arquivo(s) adicionado(s).`;
+  toast(msg, lrCount > 0 ? 'info' : 'ok');
 }
 function removerArquivo(procId, arqId) {
   const p = state.processos.find(x => x.id === procId);
@@ -800,7 +957,7 @@ function removerArquivo(procId, arqId) {
 }
 
 /* ==========================================================================
- * RENDERIZAÇÃO
+ * 12. RENDERIZAÇÃO
  * ======================================================================== */
 function renderTudo() { renderTabs(); renderEmptyOuWorkspace(); renderSubtitle(); renderBotoesExportacao(); }
 function renderSubtitle() {
@@ -825,12 +982,14 @@ function renderTabs() {
     const ativo = p.id === state.ativo;
     const risco = calcularRiscoProcesso(p.arquivos);
     const corRisco = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+    const temLR = p.arquivos.some(a => a.licitareq);
     return `
       <button class="tab ${ativo ? 'is-active' : ''}" role="tab" aria-selected="${ativo}"
               data-tab-proc="${p.id}" title="${escapeHtml(p.nome)}"
               style="border-left-color:${ativo ? p.cor : 'transparent'};">
         <span class="tab__dot" style="background:${p.cor || corRisco};"></span>
         ${escapeHtml(truncate(p.nome, 24))}
+        ${temLR ? `<span style="color:var(--licitareq);font-size:10px;margin-left:4px;">⬢</span>` : ''}
       </button>`;
   }).join('');
   const btnNovo = `
@@ -893,7 +1052,26 @@ function renderAchadosConsolidados(arquivos) {
     </div>`;
 }
 
-/* ---------- Render principal do workspace ---------- */
+/* ---------- Info do LicitaReq ---------- */
+function renderLicitaReqInfo(processo) {
+  const arquivosLR = processo.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
+  if (!arquivosLR.length) return '';
+  const ref = arquivosLR[0].licitareq;
+  return `
+    <div class="licitareq-info" role="note">
+      <strong>⬢ Integração LicitaReq ativa</strong> — ${arquivosLR.length} arquivo(s) reconhecido(s).
+      ${ref.processo ? `Processo detectado: <b>${escapeHtml(ref.processo)}</b>.` : ''}
+      ${ref.valor > 0 ? `Valor: <b>${ref.valor.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</b>.` : ''}
+      ${ref.empresa ? `<span style="color:var(--danger);">Empresa mencionada: <b>${escapeHtml(ref.empresa)}</b>.</span>` : ''}
+      <div class="licitareq-info__fields">
+        ${ref.emergencia ? '<span>🚨 <b>Emergência</b> detectada</span>' : ''}
+        ${ref.inexigibilidade ? '<span>⚖️ <b>Inexigibilidade</b> detectada</span>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+/* ---------- Render do workspace ---------- */
 function renderWorkspace() {
   const p = getProcessoAtivo();
   if (!p) return;
@@ -915,6 +1093,7 @@ function renderWorkspace() {
   const totalAplicaveis = arquivosOk.reduce((s, a) => s + (a.estatisticas?.aplicaveis || 0), 0);
   const totalInconf = arquivosOk.reduce((s, a) => s + (a.estatisticas?.falha || 0), 0);
   const totalNA = arquivosOk.reduce((s, a) => s + (a.estatisticas?.ignoradas || 0), 0);
+  const temLicitaReq = p.arquivos.some(a => a.licitareq);
 
   const dashArray = 2 * Math.PI * 44;
   const dashValue = (scoreConsolidado / 100) * dashArray;
@@ -929,32 +1108,67 @@ function renderWorkspace() {
           <input type="text" class="ws-nome" value="${escapeHtml(p.nome)}" data-rename="${p.id}" title="Clique para renomear" />
           <div class="ws-tags">
             <span class="processo-cor-indicator" style="background:${p.cor};" aria-hidden="true"></span>
+            ${temLicitaReq ? `<span class="tag tag--licitareq">⬢ LicitaReq</span>` : ''}
             ${p.tags.map(t => `<span class="tag">${escapeHtml(t)}<b data-remove-tag="${escapeHtml(t)}" data-proc="${p.id}">&times;</b></span>`).join('')}
             <button class="tag-add" data-add-tag="${p.id}" type="button">+ Tag</button>
           </div>
         </div>
         <div class="ws-header__right">
           <input type="color" class="color-picker" value="${p.cor}" data-color="${p.id}" title="Cor de identificação" />
+          <button class="btn btn--soft btn--sm" data-criterios-proc="${p.id}" type="button" title="Ver critérios avaliativos ativos">
+            ⚙️ Critérios
+          </button>
           <button class="btn-icon danger" data-delete-proc="${p.id}" title="Excluir processo" type="button">🗑</button>
         </div>
       </header>
 
-      <!-- Perfil da Licitação -->
+      <!-- Perfil editável por processo -->
       <section class="ws-perfil" aria-label="Perfil da Licitação">
         <div class="ws-perfil__item" data-tipo="modalidade">
-          <span class="ws-perfil__label">Modalidade (Art. 28)</span>
-          <span class="ws-perfil__value">${escapeHtml(perfil.modalidade)}</span>
-          ${perfil._auto.modalidade ? `<span class="ws-perfil__hint">detectada automaticamente</span>` : ``}
+          <label class="ws-perfil__label">
+            <span>Modalidade (Art. 28)</span>
+            ${perfil._override.modalidade !== 'auto' ? `<span class="ws-perfil__hint">override</span>` : ''}
+          </label>
+          <select class="ws-perfil__select" data-perfil="modalidade" data-proc="${p.id}">
+            <option value="auto" ${perfil._override.modalidade === 'auto' ? 'selected' : ''}>Auto (${escapeHtml(perfil.modalidade)})</option>
+            <option value="pregao" ${perfil._override.modalidade === 'pregao' ? 'selected' : ''}>Pregão</option>
+            <option value="concorrencia" ${perfil._override.modalidade === 'concorrencia' ? 'selected' : ''}>Concorrência</option>
+            <option value="concurso" ${perfil._override.modalidade === 'concurso' ? 'selected' : ''}>Concurso</option>
+            <option value="leilao" ${perfil._override.modalidade === 'leilao' ? 'selected' : ''}>Leilão</option>
+            <option value="dialogo" ${perfil._override.modalidade === 'dialogo' ? 'selected' : ''}>Diálogo Competitivo</option>
+            <option value="dispensa" ${perfil._override.modalidade === 'dispensa' ? 'selected' : ''}>Dispensa</option>
+            <option value="inexigibilidade" ${perfil._override.modalidade === 'inexigibilidade' ? 'selected' : ''}>Inexigibilidade</option>
+          </select>
         </div>
         <div class="ws-perfil__item" data-tipo="natureza">
-          <span class="ws-perfil__label">Natureza do Objeto (Art. 6º)</span>
-          <span class="ws-perfil__value">${escapeHtml(perfil.natureza)}</span>
-          ${perfil._auto.natureza ? `<span class="ws-perfil__hint">detectada automaticamente</span>` : ``}
+          <label class="ws-perfil__label">
+            <span>Natureza (Art. 6º)</span>
+            ${perfil._override.natureza !== 'auto' ? `<span class="ws-perfil__hint">override</span>` : ''}
+          </label>
+          <select class="ws-perfil__select" data-perfil="natureza" data-proc="${p.id}">
+            <option value="auto" ${perfil._override.natureza === 'auto' ? 'selected' : ''}>Auto (${escapeHtml(perfil.natureza)})</option>
+            <option value="bens" ${perfil._override.natureza === 'bens' ? 'selected' : ''}>Bens comuns</option>
+            <option value="servicos-comuns" ${perfil._override.natureza === 'servicos-comuns' ? 'selected' : ''}>Serviços comuns</option>
+            <option value="servicos-especiais" ${perfil._override.natureza === 'servicos-especiais' ? 'selected' : ''}>Serviços especiais</option>
+            <option value="obras" ${perfil._override.natureza === 'obras' ? 'selected' : ''}>Obras / Engenharia</option>
+            <option value="intelectual" ${perfil._override.natureza === 'intelectual' ? 'selected' : ''}>Serviços intelectuais</option>
+            <option value="alienacao" ${perfil._override.natureza === 'alienacao' ? 'selected' : ''}>Alienação / Concessão</option>
+          </select>
         </div>
         <div class="ws-perfil__item" data-tipo="criterio">
-          <span class="ws-perfil__label">Critério de Julgamento (Art. 33)</span>
-          <span class="ws-perfil__value">${escapeHtml(labelCriterio(perfil.criterio))}</span>
-          ${perfil._auto.criterio ? `<span class="ws-perfil__hint">detectado automaticamente</span>` : ``}
+          <label class="ws-perfil__label">
+            <span>Critério (Art. 33)</span>
+            ${perfil._override.criterio !== 'auto' ? `<span class="ws-perfil__hint">override</span>` : ''}
+          </label>
+          <select class="ws-perfil__select" data-perfil="criterio" data-proc="${p.id}">
+            <option value="auto" ${perfil._override.criterio === 'auto' ? 'selected' : ''}>Auto (${escapeHtml(labelCriterio(perfil.criterio))})</option>
+            <option value="menor-preco" ${perfil._override.criterio === 'menor-preco' ? 'selected' : ''}>Menor preço</option>
+            <option value="maior-desconto" ${perfil._override.criterio === 'maior-desconto' ? 'selected' : ''}>Maior desconto</option>
+            <option value="melhor-tecnica" ${perfil._override.criterio === 'melhor-tecnica' ? 'selected' : ''}>Melhor técnica ou conteúdo artístico</option>
+            <option value="tecnica-preco" ${perfil._override.criterio === 'tecnica-preco' ? 'selected' : ''}>Técnica e preço</option>
+            <option value="maior-lance" ${perfil._override.criterio === 'maior-lance' ? 'selected' : ''}>Maior lance</option>
+            <option value="maior-retorno" ${perfil._override.criterio === 'maior-retorno' ? 'selected' : ''}>Maior retorno econômico</option>
+          </select>
         </div>
       </section>
 
@@ -964,6 +1178,9 @@ function renderWorkspace() {
           <span class="ws-secao__title">Documentos do Processo</span>
           <span class="ws-secao__count">${totalArquivos}</span>
         </header>
+
+        ${renderLicitaReqInfo(p)}
+
         ${totalArquivos === 0
           ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;text-align:center;">Nenhum arquivo adicionado ainda — use a área abaixo para enviar documentos.</p>`
           : `<div class="tabela-responsive-wrapper"><table class="tabela-arquivos">
@@ -983,16 +1200,25 @@ function renderWorkspace() {
           </svg>
           <p>Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
           <p style="font-size:11.5px;color:var(--text-dim);">PDF · DOCX · DOC · TXT</p>
+          <p class="ws-dropzone__licitareq">⬢ Suporta arquivos do LicitaReq (Requerimento, DFD, Despacho)</p>
         </div>
 
         <div class="ws-actions">
-          <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
-            📄 Exportar Relatório Consolidado (PDF)
-          </button>
-          <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
-            💾 Salvar este Processo (JSON)
-          </button>
+          <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>📄 Relatório Consolidado (PDF)</button>
+          <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>💾 Salvar este Processo (JSON)</button>
         </div>
+      </section>
+
+      <!-- Notas do auditor -->
+      <section class="ws-notas">
+        <header class="ws-notas__head">
+          <span class="ws-notas__title">
+            📝 Notas do Auditor
+            ${p.notas ? `<span class="ws-notas__badge">${p.notas.length} caracteres</span>` : ''}
+          </span>
+          <span style="font-size:11px;color:var(--text-dim);">Salvo automaticamente</span>
+        </header>
+        <textarea class="ws-notas__textarea" data-notas="${p.id}" placeholder="Registre observações internas: inconsistências detectadas, contatos, dúvidas pendentes, referências documentais, próximos passos…">${escapeHtml(p.notas || '')}</textarea>
       </section>
 
       <!-- Métricas -->
@@ -1020,9 +1246,7 @@ function renderWorkspace() {
 
       <!-- Blocos -->
       <section aria-label="Resumo por bloco de verificação">
-        <h3 style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:800;margin:0 0 .75rem;">
-          Resumo por Bloco de Verificação Essencial
-        </h3>
+        <h3 style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:800;margin:0 0 .75rem;">Resumo por Bloco de Verificação Essencial</h3>
         <div class="grid-blocos">${blocosHtml}</div>
       </section>
 
@@ -1036,7 +1260,6 @@ function renderWorkspace() {
           ${renderAchadosConsolidados(arquivosOk)}
         </section>` : ''}
 
-      <!-- Aviso -->
       <div class="aviso-orientativo" role="note">
         <strong>Nota</strong>
         <span>${escapeHtml(AVISO_ORIENTATIVO.replace(/^Nota:\s*/, ''))}</span>
@@ -1054,13 +1277,18 @@ function renderLinhaArquivo(procId, arq) {
   const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
   const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
   const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+  const isLR = arq.licitareq;
+
   return `
     <tr>
       <td data-label="Arquivo">
         <div class="arquivo-nome">
-          <span class="arquivo-ext">${escapeHtml(arq.ext || 'ARQ')}</span>
+          <span class="arquivo-ext ${isLR ? 'arquivo-ext--licitareq' : ''}">${escapeHtml(arq.ext || 'ARQ')}</span>
           <span class="arquivo-nome__txt">
-            <strong title="${escapeHtml(arq.nomeArquivo)}">${escapeHtml(truncate(arq.nomeArquivo, 40))}</strong>
+            <strong title="${escapeHtml(arq.nomeArquivo)}">
+              ${escapeHtml(truncate(arq.nomeArquivo, 40))}
+              ${isLR ? `<span class="arquivo-badge-licitareq">⬢ LicitaReq</span>` : ''}
+            </strong>
             <small>${formatBytes(arq.tamanho || 0)}${arq.status === 'erro' ? ' · ' + escapeHtml(arq.erro || 'Erro') : ''}</small>
           </span>
         </div>
@@ -1088,7 +1316,7 @@ function animarGauge() {
 }
 
 /* ==========================================================================
- * EVENTOS DO WORKSPACE
+ * 13. BIND DE EVENTOS DO WORKSPACE
  * ======================================================================== */
 function bindEventosWorkspace() {
   const inputNome = els.workspace.querySelector('[data-rename]');
@@ -1118,7 +1346,40 @@ function bindEventosWorkspace() {
       }
     });
   }
+
+  /* Seletor de perfil editável */
+  $$('[data-perfil]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const p = state.processos.find(x => x.id === sel.dataset.proc);
+      if (!p) return;
+      if (!p.metadados) p.metadados = { modalidade: 'auto', natureza: 'auto', criterio: 'auto' };
+      p.metadados[sel.dataset.perfil] = sel.value;
+      reanalisarProcesso(p);
+      renderWorkspace();
+      toast(`Perfil "${sel.dataset.perfil}" atualizado.`, 'ok');
+    });
+  });
+
+  /* Notas do auditor */
+  const notasTA = els.workspace.querySelector('[data-notas]');
+  if (notasTA) {
+    const procId = notasTA.dataset.notas;
+    let saveT;
+    notasTA.addEventListener('input', () => {
+      const p = state.processos.find(x => x.id === procId);
+      if (!p) return;
+      p.notas = notasTA.value;
+      clearTimeout(saveT);
+      saveT = setTimeout(() => {
+        const badge = els.workspace.querySelector('.ws-notas__badge');
+        if (badge) badge.textContent = `${p.notas.length} caracteres`;
+      }, 500);
+    });
+  }
+
   els.workspace.querySelector('[data-delete-proc]')?.addEventListener('click', e => excluirProcesso(e.currentTarget.dataset.deleteProc));
+  els.workspace.querySelector('[data-criterios-proc]')?.addEventListener('click', e => abrirModalCriterios(e.currentTarget.dataset.criteriosProc));
+
   els.workspace.querySelector('[data-add-tag]')?.addEventListener('click', e => {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.addTag);
     if (!p) return;
@@ -1137,7 +1398,7 @@ function bindEventosWorkspace() {
   $$('[data-pdf-arq]').forEach(btn => btn.addEventListener('click', () => {
     const p = state.processos.find(x => x.id === btn.dataset.proc);
     const a = p?.arquivos.find(x => x.id === btn.dataset.pdfArq);
-    if (a && a.status === 'ok') exportarRelatorioAuditPDF(a);
+    if (a && a.status === 'ok') exportarRelatorioAuditPDF(a, p);
   }));
   els.workspace.querySelector('[data-pdf-proc]')?.addEventListener('click', e => {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.pdfProc);
@@ -1164,6 +1425,25 @@ function bindEventosWorkspace() {
     });
   }
 }
+
+/* ---------- Reanálise híbrida de um processo ---------- */
+function reanalisarProcesso(processo) {
+  const perfis = getPerfilProcesso(processo);
+  const paramObjeto     = (processo.metadados?.natureza  !== 'auto') ? processo.metadados.natureza  : els.paramObjeto.value;
+  const paramModalidade = (processo.metadados?.modalidade !== 'auto') ? processo.metadados.modalidade : els.paramModalidade.value;
+  const paramCriterio   = (processo.metadados?.criterio   !== 'auto') ? processo.metadados.criterio   : els.paramCriterio.value;
+
+  processo.arquivos.forEach(a => {
+    if (a.status === 'ok' && a.texto) {
+      const res = analisarTextoIndividual(a.texto, {
+        paramObjeto, paramModalidade, paramCriterio,
+        nomeArquivo: a.nomeArquivo,
+      });
+      Object.assign(a, res);
+    }
+  });
+}
+
 function abrirInput(procId) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true;
@@ -1176,7 +1456,7 @@ function abrirInput(procId) {
 }
 
 /* ==========================================================================
- * MODAL DE DETALHES
+ * 14. MODAL DE DETALHES DO ARQUIVO
  * ======================================================================== */
 function abrirModalArquivo(procId, arqId) {
   const p = state.processos.find(x => x.id === procId);
@@ -1212,8 +1492,22 @@ function abrirModalArquivo(procId, arqId) {
       <div class="achado__body" style="font-style:italic;">${escapeHtml(r.motivoNA || 'Regra não aplicável à combinação declarada.')}</div>
     </div>`).join('');
 
+  const licitareqBloco = a.licitareq ? `
+    <div class="licitareq-info" style="margin: 0 0 var(--sp-4) 0;">
+      <strong>⬢ Arquivo LicitaReq reconhecido</strong>
+      <div class="licitareq-info__fields">
+        ${a.licitareq.processo ? `<span>Processo: <b>${escapeHtml(a.licitareq.processo)}</b></span>` : ''}
+        ${a.licitareq.unidade ? `<span>Unidade: <b>${escapeHtml(a.licitareq.unidade)}</b></span>` : ''}
+        ${a.licitareq.valor > 0 ? `<span>Valor: <b>${escapeHtml(a.licitareq.valor.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}))}</b></span>` : ''}
+        ${a.licitareq.empresa ? `<span style="color:var(--danger);">Empresa: <b>${escapeHtml(a.licitareq.empresa)}</b></span>` : ''}
+        ${a.licitareq.emergencia ? '<span>🚨 Emergência</span>' : ''}
+        ${a.licitareq.inexigibilidade ? '<span>⚖️ Inexigibilidade</span>' : ''}
+      </div>
+    </div>` : '';
+
   els.modalTitulo.textContent = a.nomeArquivo;
   els.modalBody.innerHTML = `
+    ${licitareqBloco}
     <div class="detalhe-score">
       <div class="detalhe-score__numero" style="color:${corScore};">${a.score.toFixed(1)}%</div>
       <div class="detalhe-score__info">
@@ -1239,12 +1533,127 @@ function abrirModalArquivo(procId, arqId) {
       <span>${escapeHtml(AVISO_ORIENTATIVO.replace(/^Nota:\s*/, ''))}</span>
     </div>`;
   els.modal.classList.remove('is-hidden');
-  $('#btnPdfModal')?.addEventListener('click', () => exportarRelatorioAuditPDF(a));
+  $('#btnPdfModal')?.addEventListener('click', () => exportarRelatorioAuditPDF(a, p));
 }
 function fecharModal() { els.modal.classList.add('is-hidden'); els.modalBody.innerHTML = ''; }
 
 /* ==========================================================================
- * PDF EXECUTIVO — pdfMake (conciso e adaptativo)
+ * 15. MODAL DE CRITÉRIOS ATIVOS
+ * ======================================================================== */
+function abrirModalCriterios(procId) {
+  const p = state.processos.find(x => x.id === procId);
+  if (!p) return;
+
+  /* Reconstrói contexto agregando todos os arquivos do processo */
+  const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
+  const corpus = arquivosOk.map(a => a.texto || '').join('\n\n');
+  const perfis = getPerfilProcesso(p);
+
+  /* Determina contexto representativo */
+  const paramObjeto     = (p.metadados?.natureza  !== 'auto') ? p.metadados.natureza  : els.paramObjeto.value;
+  const paramModalidade = (p.metadados?.modalidade !== 'auto') ? p.metadados.modalidade : els.paramModalidade.value;
+  const paramCriterio   = (p.metadados?.criterio   !== 'auto') ? p.metadados.criterio   : els.paramCriterio.value;
+
+  /* Roda auditoria com o corpus consolidado para ter visão geral */
+  const res = analisarTextoIndividual(corpus || ' ', {
+    paramObjeto, paramModalidade, paramCriterio,
+    nomeArquivo: '',
+  });
+
+  const totalAplic = res.resultados.filter(r => r.aplicavel).length;
+  const totalNA    = res.resultados.filter(r => !r.aplicavel).length;
+  const totalOK    = res.resultados.filter(r => r.aplicavel && r.conforme).length;
+  const totalFalha = res.resultados.filter(r => r.aplicavel && !r.conforme).length;
+
+  /* Agrupa por bloco */
+  const blocos = {};
+  for (let b = 1; b <= 6; b++) blocos[b] = { aplicavel: [], na: [] };
+  res.resultados.forEach(r => {
+    if (!blocos[r.bloco]) blocos[r.bloco] = { aplicavel: [], na: [] };
+    if (r.aplicavel) blocos[r.bloco].aplicavel.push(r);
+    else blocos[r.bloco].na.push(r);
+  });
+
+  const renderItem = (r) => {
+    const cls = !r.aplicavel ? 'criterios-item--na'
+              : (r.conforme ? 'criterios-item--ok' : 'criterios-item--fail');
+    const bullet = !r.aplicavel ? '○' : (r.conforme ? '✓' : '✗');
+    const sevLabel = !r.aplicavel ? 'N/A' : r.severidade;
+    return `
+      <div class="criterios-item ${cls}">
+        <span class="criterios-item__bullet">${bullet}</span>
+        <div class="criterios-item__body">
+          <div class="criterios-item__nome">${escapeHtml(r.id)} · ${escapeHtml(r.nome)}</div>
+          <div class="criterios-item__law">${escapeHtml(r.fundamento)}</div>
+          <div class="criterios-item__desc">
+            ${r.aplicavel
+              ? (r.conforme ? `<em>Conforme.</em>` : `<em>Não conforme:</em> ${escapeHtml(r.mensagemFalha)} <br>→ <b>Recomendação:</b> ${escapeHtml(r.recomendacao)}`)
+              : `<em>Não aplicável:</em> ${escapeHtml(r.motivoNA || 'Regra não aplicável à combinação declarada.')}`}
+          </div>
+        </div>
+        <span class="criterios-item__sev">${sevLabel}</span>
+      </div>`;
+  };
+
+  const gruposHtml = [1,2,3,4,5,6].map(b => {
+    const dados = blocos[b];
+    if (!dados || (dados.aplicavel.length === 0 && dados.na.length === 0)) return '';
+    return `
+      <div class="criterios-grupo">
+        <div class="criterios-grupo__head">
+          <span>B${b} · ${escapeHtml(BLOCO_TITULO[b])}</span>
+          <span style="font-weight:600;color:var(--text-dim);font-size:11px;text-transform:none;letter-spacing:0;">
+            ${dados.aplicavel.length} aplicáveis · ${dados.na.length} N/A
+          </span>
+        </div>
+        <div class="criterios-grupo__body">
+          ${dados.aplicavel.map(renderItem).join('')}
+          ${dados.na.map(renderItem).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  els.modalCriteriosTitulo.textContent = `Critérios Ativos — ${p.nome}`;
+  els.modalCriteriosBody.innerHTML = `
+    <div class="criterios-resumo">
+      <div class="criterios-resumo__item" data-tipo="ok">
+        <span class="criterios-resumo__num" style="color:var(--ok);">${totalOK}</span>
+        <span class="criterios-resumo__lbl">Conformes</span>
+      </div>
+      <div class="criterios-resumo__item" data-tipo="falha">
+        <span class="criterios-resumo__num" style="color:var(--danger);">${totalFalha}</span>
+        <span class="criterios-resumo__lbl">Inconformes</span>
+      </div>
+      <div class="criterios-resumo__item" data-tipo="na">
+        <span class="criterios-resumo__num" style="color:var(--neutral);">${totalNA}</span>
+        <span class="criterios-resumo__lbl">N/A</span>
+      </div>
+      <div class="criterios-resumo__item">
+        <span class="criterios-resumo__num" style="color:var(--brand);">${totalAplic}</span>
+        <span class="criterios-resumo__lbl">Aplicáveis</span>
+      </div>
+    </div>
+
+    <div style="padding: 12px 14px; background: var(--surface-2); border-radius: var(--radius-sm); margin-bottom: var(--sp-5); font-size: 12.5px; color: var(--text-muted); line-height: 1.6;">
+      <strong style="color:var(--text);">Contexto aplicado:</strong>
+      Modalidade <b>${escapeHtml(perfis.modalidade)}</b> ·
+      Natureza <b>${escapeHtml(perfis.natureza)}</b> ·
+      Critério <b>${escapeHtml(labelCriterio(perfis.criterio))}</b>
+    </div>
+
+    ${gruposHtml || '<p style="text-align:center;color:var(--text-dim);padding:24px;">Nenhum critério a exibir.</p>'}
+
+    <div class="aviso-orientativo" style="margin-top: var(--sp-5);">
+      <strong>Nota</strong>
+      <span>${escapeHtml(AVISO_ORIENTATIVO.replace(/^Nota:\s*/, ''))}</span>
+    </div>`;
+
+  els.modalCriterios.classList.remove('is-hidden');
+}
+function fecharModalCriterios() { els.modalCriterios.classList.add('is-hidden'); els.modalCriteriosBody.innerHTML = ''; }
+
+/* ==========================================================================
+ * 16. PDF EXECUTIVO
  * ======================================================================== */
 const PDF_PALETTE = {
   primaria: '#1e3a8a', secundaria: '#2563eb', texto: '#1e293b',
@@ -1254,6 +1663,7 @@ const PDF_PALETTE = {
   warnBg: '#fef3c7', warnFg: '#b45309',
   dangerBg: '#fee2e2', dangerFg: '#b91c1c',
   neutralBg: '#e2e8f0', neutralFg: '#475569',
+  licitareqBg: '#e0e7ff', licitareqFg: '#4338ca',
   accentTeal: '#0f766e',
 };
 function _riscoCor(r) {
@@ -1276,6 +1686,8 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   const score = rep.score || 0;
   const coresRisco = _riscoCor(risco);
   const P = PDF_PALETTE;
+  const notas = opts.notas || '';
+  const licitareqInfo = opts.licitareqInfo || null;
 
   const dataGeracao = new Date();
   const dataFmt = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -1296,7 +1708,6 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     ]
   });
 
-  /* Banner */
   const banner = {
     table: { widths: ['*'], body: [[{
       text: tipo === 'processo' ? 'RELATÓRIO CONSOLIDADO DE AUDITORIA' : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE',
@@ -1307,17 +1718,17 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   };
   const subtitulo = { text: nome, fontSize: 10, color: P.textoMuted, alignment: 'center', italics: true, margin: [0, 0, 0, 14] };
 
-  /* Perfil da Licitação */
+  /* Perfil */
   const perfil = {
     table: {
       widths: ['22%', '78%'],
       body: [
         [{ text: 'PERFIL DA LICITAÇÃO', colSpan: 2, bold: true, fontSize: 9, color: '#fff', fillColor: P.secundaria, alignment: 'center', margin: [0, 4, 0, 4] }, {}],
-        [{ text: 'Modalidade (Art. 28):', bold: true, color: P.primaria, fontSize: 9 }, { text: id.modalidade || '—', fontSize: 9, color: P.texto }],
-        [{ text: 'Natureza (Art. 6º):', bold: true, color: P.primaria, fontSize: 9 }, { text: id.natureza || '—', fontSize: 9, color: P.texto }],
-        [{ text: 'Critério (Art. 33):', bold: true, color: P.primaria, fontSize: 9 }, { text: labelCriterio(id.criterio), fontSize: 9, color: P.texto }],
+        [{ text: 'Modalidade:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.modalidade || '—', fontSize: 9, color: P.texto }],
+        [{ text: 'Natureza do Objeto:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.natureza || '—', fontSize: 9, color: P.texto }],
+        [{ text: 'Critério de Julgamento:', bold: true, color: P.primaria, fontSize: 9 }, { text: labelCriterio(id.criterio), fontSize: 9, color: P.texto }],
         [{ text: 'Órgão / Entidade:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.orgao || 'Não informado', fontSize: 9, color: P.texto }],
-        [{ text: 'Nº Processo:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.processo || 'Não identificado', fontSize: 9, color: P.texto }],
+        [{ text: 'Nº do Processo:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.processo || 'Não identificado', fontSize: 9, color: P.texto }],
         [{ text: 'Objeto:', bold: true, color: P.primaria, fontSize: 9 }, { text: id.objeto || 'Não identificado', fontSize: 9, color: P.texto }],
       ]
     },
@@ -1326,10 +1737,28 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 10, paddingRight: () => 10,
       fillColor: (i) => i === 1 ? null : (i % 2 === 0 ? P.zebra : null)
     },
-    margin: [0, 0, 0, 16]
+    margin: [0, 0, 0, 12]
   };
 
-  /* Dashboard executivo */
+  /* LicitaReq */
+  const licBloco = licitareqInfo ? {
+    table: { widths: ['*'], body: [[{
+      stack: [
+        { text: '⬢ ARQUIVO LICITAREQ RECONHECIDO', fontSize: 8.5, bold: true, color: P.licitareqFg, characterSpacing: 0.5 },
+        { text: [
+          licitareqInfo.processo ? `Processo: ${licitareqInfo.processo}. ` : '',
+          licitareqInfo.unidade ? `Unidade: ${licitareqInfo.unidade}. ` : '',
+          licitareqInfo.valor > 0 ? `Valor: ${licitareqInfo.valor.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}. ` : '',
+          licitareqInfo.empresa ? `Empresa mencionada: ${licitareqInfo.empresa}. ` : '',
+          licitareqInfo.emergencia ? 'Sinalização de EMERGÊNCIA. ' : '',
+          licitareqInfo.inexigibilidade ? 'Sinalização de INEXIGIBILIDADE. ' : ''
+        ], fontSize: 8.5, color: P.licitareqFg, margin: [0, 4, 0, 0] }
+      ], fillColor: P.licitareqBg, margin: [10, 8, 10, 8]
+    }]] },
+    layout: 'noBorders',
+    margin: [0, 0, 0, 12]
+  } : { text: '', margin: [0, 0, 0, 0] };
+
   const totalInconf = st.falha || 0, totalCrit = st.criticas || 0, totalMed = st.medias || 0, totalBai = st.baixas || 0;
   const totalNA = st.ignoradas || 0, totalAplic = st.aplicaveis || 0;
 
@@ -1358,10 +1787,9 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       ]]
     },
     layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => P.borda, vLineColor: () => P.borda },
-    margin: [0, 0, 0, 14]
+    margin: [0, 0, 0, 12]
   };
 
-  /* Aviso orientativo */
   const avisoPDF = {
     table: { widths: ['*'], body: [[{
       text: AVISO_ORIENTATIVO,
@@ -1369,8 +1797,20 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       fillColor: P.zebra, margin: [10, 8, 10, 8], alignment: 'justify'
     }]] },
     layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => P.borda, vLineColor: () => P.borda },
-    margin: [0, 0, 0, 16]
+    margin: [0, 0, 0, 14]
   };
+
+  /* Notas */
+  const notasBloco = (tipo === 'processo' && notas.trim()) ? {
+    table: { widths: ['*'], body: [[{
+      stack: [
+        { text: '📝 NOTAS DO AUDITOR', fontSize: 8.5, bold: true, color: P.primaria, characterSpacing: 0.5 },
+        { text: notas.trim(), fontSize: 9, color: P.texto, margin: [0, 5, 0, 0], alignment: 'justify', lineHeight: 1.4 }
+      ], fillColor: P.zebra, margin: [10, 10, 10, 10]
+    }]] },
+    layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => P.borda, vLineColor: () => P.borda },
+    margin: [0, 0, 0, 14]
+  } : { text: '', margin: [0, 0, 0, 0] };
 
   /* Resumo por bloco */
   const blocos = st.porBloco || {};
@@ -1408,10 +1848,10 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       fillColor: (i) => i === 0 ? P.primaria : (i % 2 === 0 ? P.zebra : null),
       paddingTop: () => 4, paddingBottom: () => 4, paddingLeft: () => 6, paddingRight: () => 6
     },
-    margin: [0, 0, 0, 16]
+    margin: [0, 0, 0, 14]
   };
 
-  /* Achados prioritários */
+  /* Achados */
   const achadosTodas = (rep.resultados || []).filter(r => r.aplicavel && !r.conforme);
   const achadosPrioritarios = achadosTodas.filter(r => r.severidade !== 'BAIXA');
   const achadosSecundarios = achadosTodas.filter(r => r.severidade === 'BAIXA');
@@ -1465,10 +1905,9 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       fillColor: (i) => i === 0 ? P.primaria : null,
       paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 6, paddingRight: () => 6
     },
-    margin: [0, 0, 0, 18]
+    margin: [0, 0, 0, 16]
   };
 
-  /* Parecer */
   const parecerTexto = risco === 'ALTO'
     ? 'Publicação desaconselhada — identificados vícios de natureza crítica/impeditiva. Recomenda-se saneamento integral antes de qualquer publicação.'
     : risco === 'MÉDIO'
@@ -1482,10 +1921,9 @@ function gerarDefinicaoPDF(rep, opts = {}) {
         { text: parecerTexto, fontSize: 9, color: P.texto, margin: [0, 5, 0, 0], alignment: 'justify', lineHeight: 1.4 }
       ], fillColor: corParecerBg, margin: [12, 10, 12, 10]
     }]] },
-    layout: 'noBorders', margin: [0, 0, 0, 22]
+    layout: 'noBorders', margin: [0, 0, 0, 20]
   };
 
-  /* Assinatura */
   const assinatura = {
     table: {
       dontBreakRows: true, widths: ['*'],
@@ -1507,7 +1945,7 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     header, footer,
     defaultStyle: { font: 'Roboto', fontSize: 9, color: P.texto, lineHeight: 1.3 },
     content: [
-      banner, subtitulo, perfil, dashboard, avisoPDF,
+      banner, subtitulo, perfil, licBloco, dashboard, avisoPDF, notasBloco,
       { text: 'RESUMO POR BLOCO DE VERIFICAÇÃO', style: 'secaoTitulo', keepWithNext: true },
       resumoBlocos,
       { text: 'ACHADOS PRIORITÁRIOS', style: 'secaoTitulo', keepWithNext: true },
@@ -1520,42 +1958,77 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   };
 }
 
-function exportarRelatorioAuditPDF(arq) {
+/* --------------------------------------------------------------------------
+ * Wrappers públicos
+ * ------------------------------------------------------------------------ */
+function exportarRelatorioAuditPDF(arq, processo = null) {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   if (!arq || arq.status !== 'ok') { toast('Arquivo não disponível.', 'error'); return; }
-  const dd = gerarDefinicaoPDF(arq, { tipo: 'arquivo', nome: arq.nomeArquivo });
+  const dd = gerarDefinicaoPDF(arq, {
+    tipo: 'arquivo',
+    nome: arq.nomeArquivo,
+    licitareqInfo: arq.licitareq || null,
+  });
   const safe = String(arq.nomeArquivo || 'arquivo').replace(/[/\\?%*:|"<>]/g, '_');
   try { pdfMake.createPdf(dd).download(`Relatorio_${safe}.pdf`); toast('PDF individual gerado.', 'ok'); }
   catch (e) { console.error(e); toast('Erro ao gerar PDF.', 'error'); }
 }
+
 function exportarRelatorioProcessoConsolidadoPDF(processo) {
   const arquivosOk = (processo?.arquivos || []).filter(a => a.status === 'ok');
   if (!arquivosOk.length) { toast('Nenhum arquivo analisado.', 'error'); return; }
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
+
   const corpus = arquivosOk.map(a => `\n===== ${a.nomeArquivo} =====\n${a.texto}`).join('\n');
+  const perfis = getPerfilProcesso(processo);
+  const paramObjeto     = (processo.metadados?.natureza  !== 'auto') ? processo.metadados.natureza  : els.paramObjeto.value;
+  const paramModalidade = (processo.metadados?.modalidade !== 'auto') ? processo.metadados.modalidade : els.paramModalidade.value;
+  const paramCriterio   = (processo.metadados?.criterio   !== 'auto') ? processo.metadados.criterio   : els.paramCriterio.value;
+
   const res = analisarTextoIndividual(corpus, {
-    paramObjeto: els.paramObjeto.value, paramModalidade: els.paramModalidade.value, paramCriterio: els.paramCriterio.value
+    paramObjeto, paramModalidade, paramCriterio,
+    nomeArquivo: '',
   });
-  const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: processo.nome });
+
+  /* Coleta info LicitaReq agregada */
+  const arquivosLR = processo.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
+  const licInfo = arquivosLR.length ? arquivosLR[0].licitareq : null;
+
+  const dd = gerarDefinicaoPDF(res, {
+    tipo: 'processo',
+    nome: processo.nome,
+    notas: processo.notas || '',
+    licitareqInfo: licInfo,
+  });
   const safe = String(processo.nome || 'processo').replace(/[/\\?%*:|"<>]/g, '_');
   try { pdfMake.createPdf(dd).download(`Relatorio_Processo_${safe}.pdf`); toast('PDF consolidado gerado.', 'ok'); }
   catch (e) { console.error(e); toast('Erro ao gerar PDF.', 'error'); }
 }
+
 function exportarPDFTodos() {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   const lista = state.processos.filter(p => p.arquivos.some(a => a.status === 'ok'));
   if (!lista.length) { toast('Nenhum processo com arquivos analisados.', 'error'); return; }
+
   const contents = [];
   lista.forEach((p, idx) => {
     const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
     const corpus = arquivosOk.map(a => `\n===== ${a.nomeArquivo} =====\n${a.texto}`).join('\n');
-    const res = analisarTextoIndividual(corpus, {
-      paramObjeto: els.paramObjeto.value, paramModalidade: els.paramModalidade.value, paramCriterio: els.paramCriterio.value
+    const paramObjeto     = (p.metadados?.natureza  !== 'auto') ? p.metadados.natureza  : els.paramObjeto.value;
+    const paramModalidade = (p.metadados?.modalidade !== 'auto') ? p.metadados.modalidade : els.paramModalidade.value;
+    const paramCriterio   = (p.metadados?.criterio   !== 'auto') ? p.metadados.criterio   : els.paramCriterio.value;
+    const res = analisarTextoIndividual(corpus, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: '' });
+    const arquivosLR = p.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
+    const licInfo = arquivosLR.length ? arquivosLR[0].licitareq : null;
+    const dd = gerarDefinicaoPDF(res, {
+      tipo: 'processo', nome: p.nome,
+      notas: p.notas || '',
+      licitareqInfo: licInfo,
     });
-    const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: p.nome });
     if (idx > 0) contents.push({ text: '', pageBreak: 'before' });
     contents.push(...dd.content);
   });
+
   const ddFinal = {
     pageSize: 'A4', pageMargins: [40, 50, 40, 50],
     defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.3 },
@@ -1574,18 +2047,21 @@ function exportarPDFTodos() {
 }
 
 /* ==========================================================================
- * JSON — Exportação e Importação múltipla
+ * 17. JSON — EXPORTAÇÃO E IMPORTAÇÃO
  * ======================================================================== */
 function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
-    ferramenta: 'LicitaAudit', versao: '7.0.0', exportadoEm: new Date().toISOString(),
+    ferramenta: 'LicitaAudit', versao: '7.1.0', exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags, criadoEm: p.criadoEm,
+      notas: p.notas || '',
+      metadados: p.metadados || { modalidade: 'auto', natureza: 'auto', criterio: 'auto' },
       arquivos: p.arquivos.filter(a => a.status === 'ok').map(a => ({
         id: a.id, nomeArquivo: a.nomeArquivo, ext: a.ext, tamanho: a.tamanho,
         score: a.score, risco: a.risco, identificacao: a.identificacao,
         estatisticas: a.estatisticas, resultados: a.resultados, correcoes: a.correcoes,
+        licitareq: a.licitareq || null,
         texto: a.texto ? a.texto.slice(0, 200000) : '',
       })),
     })),
@@ -1614,6 +2090,8 @@ function normalizarProcessoImportado(proc) {
     cor: proc?.cor || CORES_PRESET[state.processos.length % CORES_PRESET.length],
     tags: Array.isArray(proc?.tags) ? proc.tags.slice(0, 24) : [],
     criadoEm: proc?.criadoEm || new Date().toISOString(),
+    notas: proc?.notas || '',
+    metadados: proc?.metadados || { modalidade: 'auto', natureza: 'auto', criterio: 'auto' },
     _importadoEm: new Date().toISOString(),
     arquivos: arquivos.filter(a => a && typeof a === 'object').map(a => ({
       ...a,
@@ -1626,6 +2104,7 @@ function normalizarProcessoImportado(proc) {
       correcoes: Array.isArray(a.correcoes) ? a.correcoes : [],
       estatisticas: a.estatisticas || { total: MATRIZ_CORE_30.length, aplicaveis: 0, ignoradas: 0, ok: 0, falha: 0, criticas: 0, medias: 0, baixas: 0, porBloco: {} },
       identificacao: a.identificacao || {},
+      licitareq: a.licitareq || false,
     })),
   };
 }
@@ -1682,7 +2161,7 @@ async function importarJSONMultiplos(files) {
 async function importarJSON(file) { return importarJSONMultiplos([file]); }
 
 /* ==========================================================================
- * TEMA
+ * 18. TEMA
  * ======================================================================== */
 function initTheme() {
   const stored = localStorage.getItem('licitaudit:theme');
@@ -1697,7 +2176,7 @@ function toggleTheme() {
 }
 
 /* ==========================================================================
- * EXEMPLO
+ * 19. EXEMPLO
  * ======================================================================== */
 function carregarExemplo() {
   const exemplo = `PROCESSO ADMINISTRATIVO: 00000.004512/2026-88
@@ -1723,7 +2202,8 @@ Estudo Técnico Preliminar (ETP) e Termo de Referência (TR) anexos.
 Parcelado em 2 lotes por compatibilidade técnica.
 
 7. VEDAÇÕES
-Vedada a indicação de marca ou modelo. Vedada a participação de servidores do órgão. Exigência de declaração de trabalho infantil. Vedada a contratação de empresas suspensas no CEIS/CNEP.
+Vedada a indicação de marca ou modelo. Vedada a participação de servidores do órgão.
+Exigência de declaração de trabalho infantil. Vedada a contratação de empresas suspensas no CEIS/CNEP.
 
 8. HABILITAÇÃO
 Qualificação técnica. Declaração formal em substituição à vistoria.
@@ -1738,28 +2218,52 @@ Prazo mínimo de 8 (oito) dias úteis. Publicação no PNCP. Impugnação em fas
 Fiscal titular e fiscal substituto designados. Gestor do contrato designado.
 Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sanções administrativas previstas.`;
 
+  const exemploLR = `LicitaReq — Documento de Formalização de Demanda
+Memorando nº 042/2026
+Unidade Requisitante: Diretoria de Tecnologia da Informação
+
+OBJETO: Aquisição de Lâmpadas LED para modernização da iluminação predial.
+
+Valor estimado: R$ 32.500,00 (trinta e dois mil e quinhentos reais)
+
+Justificativa: Necessidade de modernização do parque tecnológico visando eficiência
+energética e economicidade.
+
+Dotação orçamentária prevista no programa de trabalho 12.345.6789.0001.
+
+Documento gerado eletronicamente pelo sistema LicitaReq — Motor de regras Lei 14.133/2021`;
+
   const p1 = criarProcesso('Processo A — Aquisição de TI');
   p1.cor = CORES_PRESET[0]; p1.tags = ['TI', 'Urgente', '2026'];
-  const p2 = criarProcesso('Processo B — Obra Pública');
-  p2.cor = CORES_PRESET[2]; p2.tags = ['Obra', 'Engenharia'];
-  const p3 = criarProcesso('Processo C — Consultoria Jurídica');
-  p3.cor = CORES_PRESET[1]; p3.tags = ['Intelectual', 'Inexigibilidade'];
+  const p2 = criarProcesso('Processo B — Lâmpadas LED (LicitaReq)');
+  p2.cor = CORES_PRESET[1]; p2.tags = ['LicitaReq', 'Consumo'];
+  const p3 = criarProcesso('Processo C — Obra Pública');
+  p3.cor = CORES_PRESET[2]; p3.tags = ['Obra', 'Engenharia'];
 
   (async () => {
-    const res = analisarTextoIndividual(exemplo, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto' });
+    const res1 = analisarTextoIndividual(exemplo, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto', nomeArquivo: 'Edital.txt' });
     p1.arquivos.push({
       id: uid('arq'), nomeArquivo: 'Edital_Pregao_00000.004512-2026.txt',
       ext: 'txt', tamanho: new Blob([exemplo]).size,
-      texto: exemplo, status: 'ok', ...res,
+      texto: exemplo, status: 'ok', ...res1,
     });
+
+    const res2 = analisarTextoIndividual(exemploLR, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto', nomeArquivo: 'Requerimento_LicitaReq_042.txt' });
+    p2.arquivos.push({
+      id: uid('arq'), nomeArquivo: 'Requerimento_LicitaReq_042.txt',
+      ext: 'txt', tamanho: new Blob([exemploLR]).size,
+      texto: exemploLR, status: 'ok', ...res2,
+      licitareq: !!res2.licitareq,
+    });
+
     state.ativo = p1.id;
     renderTudo();
-    toast('Exemplo carregado.', 'ok');
+    toast('Exemplo carregado com arquivo LicitaReq.', 'ok');
   })();
 }
 
 /* ==========================================================================
- * MENU MOBILE + IMPORT JSON
+ * 20. MENU MOBILE + IMPORT JSON DINÂMICO
  * ======================================================================== */
 function abrirSidebar() {
   els.sidebar?.classList.add('is-open');
@@ -1790,7 +2294,7 @@ function abrirInputJSONMultiplo() {
 }
 
 /* ==========================================================================
- * EVENTOS GLOBAIS E BOOTSTRAP
+ * 21. EVENTOS GLOBAIS E BOOTSTRAP
  * ======================================================================== */
 function bindEventosGlobais() {
   els.btnNovoProcesso?.addEventListener('click', () => criarProcesso());
@@ -1807,8 +2311,10 @@ function bindEventosGlobais() {
   });
 
   $$('[data-close-modal]').forEach(el => el.addEventListener('click', fecharModal));
+  $$('[data-close-modal-crit]').forEach(el => el.addEventListener('click', fecharModalCriterios));
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !els.modal.classList.contains('is-hidden')) fecharModal();
+    if (e.key === 'Escape' && !els.modalCriterios.classList.contains('is-hidden')) fecharModalCriterios();
     if (e.key === 'Escape') fecharSidebar();
   });
   els.sidebarToggle?.addEventListener('click', () => {
@@ -1819,22 +2325,12 @@ function bindEventosGlobais() {
     if (window.matchMedia('(max-width: 768px)').matches && e.target.closest('button, .btn')) fecharSidebar();
   });
 
-  /* Reatividade: parâmetros → reanálise completa + re-render */
+  /* Parâmetros globais → reanálise de todos os processos */
   ['paramObjeto', 'paramModalidade', 'paramCriterio'].forEach(id => {
     els[id]?.addEventListener('change', () => {
-      state.processos.forEach(p => {
-        p.arquivos.forEach(a => {
-          if (a.status === 'ok' && a.texto) {
-            Object.assign(a, analisarTextoIndividual(a.texto, {
-              paramObjeto: els.paramObjeto.value,
-              paramModalidade: els.paramModalidade.value,
-              paramCriterio: els.paramCriterio.value,
-            }));
-          }
-        });
-      });
+      state.processos.forEach(p => reanalisarProcesso(p));
       renderTudo();
-      toast('Parâmetros atualizados — matriz recalculada.', 'ok');
+      toast('Parâmetros globais atualizados em tempo real.', 'ok');
     });
   });
 
@@ -1851,7 +2347,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v7.0 · Matriz unificada (Modalidade × Natureza × Critério)'
+    '· v7.1 · Auditoria híbrida + LicitaReq + Notas + Critérios'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
