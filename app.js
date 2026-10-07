@@ -1,15 +1,16 @@
 /* ============================================================================
  * LicitaAudit · app.js
  * ----------------------------------------------------------------------------
- * v1.3.0 — Correções acumuladas:
- *   • Análise ISOLADA POR LINHA (evita contaminação entre requisitos).
- *   • Suporte a marcadores [x] (presente) e [ ] (ausente).
- *   • Requisito não mencionado em nenhuma linha → status "Atenção".
- *   • Avaliação AUTORITATIVA com termo principal (TR, ETP, Matriz etc.):
- *     se a linha do termo completo indicar ausência, o status é DANGER
- *     forçado, ignorando menções fracas (ex.: "art. 40" no rodapé).
- *   • Captura MULTILINHA e flexível do campo "Objeto:" com lookahead de seções.
- *   • Classificação expandida de objeto (TI, apoio administrativo, manutenção).
+ * v1.4.0 — Correções acumuladas:
+ *   • Extração ABRANGENTE do campo "Objeto" (3 padrões em cascata):
+ *     rótulo + valor na mesma linha | rótulo + valor na linha seguinte |
+ *     bloco multilinha até seção conhecida.
+ *   • Classificação de TI / apoio administrativo / manutenção como
+ *     "servicos-comuns" (compatível com Pregão — Art. 6º, XLI e Art. 29).
+ *   • Rótulo atualizado: "Serviços comuns / TI".
+ *   • Mensagem literal na validação Leilão × Serviços comuns/TI.
+ *   • Análise ISOLADA POR LINHA com marcadores [x] / [ ].
+ *   • Avaliação AUTORITATIVA por termo principal (TR, ETP, Matriz, Estimativa).
  *   • Validação jurídica Objeto × Modalidade (Art. 6º, XLI · Art. 28 a 32).
  *   • Truncamento de nome de arquivo preservando a extensão.
  * ========================================================================== */
@@ -106,17 +107,9 @@ function truncateFileName(name, maxBase = 30) {
 
 /* ==========================================================================
  * 3. ANÁLISE ISOLADA POR LINHA
- * --------------------------------------------------------------------------
- * Estratégia:
- *   1) Quebrar o corpus em LINHAS não vazias.
- *   2) Para cada requisito, encontrar linhas que mencionam o termo.
- *   3) Avaliar APENAS a linha do requisito (isolamento vertical).
- *   4) Priorizar marcadores explícitos: [x] = conforme, [ ] = ausente.
- *   5) Caso contrário, usar marcadores textuais de ausência na MESMA linha.
- *   6) Nenhuma menção → status "Atenção" (não encontrado).
  * ======================================================================== */
 
-/** Marcadores textuais que indicam AUSÊNCIA (aplicados apenas na linha-alvo). */
+/** Marcadores textuais que indicam AUSÊNCIA. */
 const NEGATIVE_MARKERS = [
   'ausente', 'ausencia', 'pendente', 'faltante', 'em falta',
   'nao anexado', 'nao anexa', 'nao anexo',
@@ -134,7 +127,7 @@ const NEGATIVE_MARKERS = [
   'em elaboracao', 'aguardando',
 ];
 
-/** Marcadores textuais que indicam PRESENÇA (aplicados apenas na linha-alvo). */
+/** Marcadores textuais que indicam PRESENÇA. */
 const POSITIVE_MARKERS = [
   'presente', 'anexado', 'anexa', 'anexo',
   'incluido', 'incluida', 'consta', 'constam',
@@ -143,7 +136,7 @@ const POSITIVE_MARKERS = [
   'aprovado', 'aprovada', 'conforme', 'ok',
 ];
 
-/** Divide o corpus em linhas limpas (ignora vazias e cabeçalhos de arquivo). */
+/** Divide o corpus em linhas limpas. */
 function splitLines(corpus) {
   return corpus
     .split(/\r?\n/)
@@ -183,9 +176,7 @@ function classifyRequirementLine(lineRaw, lineNorm) {
   return { status: 'ok', reason: 'Requisito mencionado sem termos negativos' };
 }
 
-/**
- * Avaliação simples por linha (usada como fallback para termos fracos).
- */
+/** Avaliação simples por linha (fallback para termos fracos). */
 function evalRequirementByLine(lines, terms) {
   const matches = [];
   for (const line of lines) {
@@ -228,18 +219,12 @@ function evalRequirementByLine(lines, terms) {
   };
 }
 
-/* ============================================================================
- * v1.3.0 · Avaliação AUTORITATIVA com termo principal
- * ----------------------------------------------------------------------------
- * Regra de ouro: se a linha que contém o TERMO PRINCIPAL indicar ausência
- * ("Ausente", "[ ]", "não consta"), o status é "danger" e nada o sobrepõe.
- *
- * Corrige o bug em que "contratação de serviços" no rodapé marcava o TR
- * como "Conforme" mesmo havendo linha explícita:
- *     "Termo de Referência (TR) - Ausente"
- * ======================================================================== */
+/**
+ * Avaliação AUTORITATIVA com termo principal.
+ * Se a linha que contém o TERMO PRINCIPAL indicar ausência ("Ausente", "[ ]",
+ * "não consta"), o status é DANGER forçado — nada o sobrepõe.
+ */
 function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = []) {
-  // ---------- 1) Linhas que contêm o TERMO PRINCIPAL ----------
   const primaryMatches = [];
   for (const line of lines) {
     for (const term of primaryTerms) {
@@ -257,7 +242,6 @@ function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = [])
       ...classifyRequirementLine(line.raw, line.normalized),
     }));
 
-    // a) Ausência explícita → DANGER FORÇADO
     const explicitDanger = evaluated.find((x) => x.status === 'danger');
     if (explicitDanger) {
       return {
@@ -270,7 +254,6 @@ function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = [])
       };
     }
 
-    // b) Linha "ok" explícita tem preferência
     const chosen = evaluated.find((x) => x.status === 'ok') || evaluated[0];
     return {
       status: chosen.status,
@@ -282,13 +265,11 @@ function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = [])
     };
   }
 
-  // ---------- 2) Fallback — termos fracos ----------
   if (fallbackTerms.length) {
     const weak = evalRequirementByLine(lines, fallbackTerms);
     return { ...weak, authoritative: false };
   }
 
-  // ---------- 3) Requisito ausente do corpus ----------
   return {
     status: 'warn',
     line: null,
@@ -303,7 +284,7 @@ function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = [])
  * 4. EXTRAÇÃO DE CAMPOS ROTULADOS (Modalidade / Objeto)
  * ======================================================================== */
 
-/** Extrai o valor de um campo rotulado (ex.: "Modalidade: Leilão"). */
+/** Extrai o valor de um campo rotulado de linha única (ex.: "Modalidade: Leilão"). */
 function extractLabeledField(text, labelPatterns) {
   for (const label of labelPatterns) {
     const rx = new RegExp(
@@ -330,31 +311,38 @@ function extractModalidadeField(text) {
 }
 
 /* ============================================================================
- * v1.3.0 · Captura MULTILINHA e flexível do campo "Objeto"
+ * v1.4.0 · Extração ABRANGENTE do campo "Objeto"
  * ----------------------------------------------------------------------------
- * Aceita numeração ("1.", "1)"), separadores variados (":", "-", "–", "—"),
- * captura por múltiplas linhas e para em qualquer seção conhecida.
+ * 3 padrões em cascata:
+ *   1) Rótulo + valor na MESMA linha
+ *   2) Rótulo + valor na LINHA SEGUINTE   ← caso "1. Identificação do Objeto\n<valor>"
+ *   3) Bloco multilinha que para em seção conhecida
  * ======================================================================== */
 function extractObjetoField(text) {
-  const LABEL = '(?:Identifica[cç][aã]o\\s+do\\s+Objeto|Objeto\\s+do\\s+Processo|Objeto\\s+da\\s+Contrata[cç][aã]o|Objeto)';
-  const NUM   = '(?:\\d+[\\.\\)]\\s*)?';
-  const SEP   = '[ \\t]*[:\\-–—][ \\t]*';
-  const STOP  = '(?:Modalidade|Checklist|Justificativa|Fundamenta[cç][aã]o|Dota[cç][aã]o|Estimativa|Crit[eé]rio|Prazo|Do\\s+Objeto|Da\\s+Contrata)';
+  const LABELS =
+    'Identifica[cç][aã]o\\s+do\\s+Objeto|Objeto\\s+do\\s+Processo|Objeto\\s+da\\s+Contrata[cç][aã]o|Objeto';
+  const NUM   = '(?:\\d+[\\.\\)]\\s*|[IVX]+\\.\\s*)?';
+  const SEP   = '[:\\-–—]*';
+  const STOP  =
+    'Modalidade|Checklist|Justificativa|Fundamenta|Dota|Estimativa|Crit[eé]rio|Prazo|Do\\s+Objeto|Da\\s+Contrata';
 
   const patterns = [
-    // 1) Bloco multilinha — para na próxima seção conhecida
+    // 1) Rótulo + valor NA MESMA linha
     new RegExp(
-      `(?:^|\\n)[ \\t]*${NUM}${LABEL}${SEP}\\n?[ \\t]*` +
-      `([\\s\\S]{2,800}?)` +
-      `(?=\\n[ \\t]*${NUM}${STOP}` +
-      `|\\n[ \\t]*\\n[ \\t]*\\n` +
-      `|\\n[ \\t]*${NUM}\\d+[\\.\\)]` +
-      `|$)`,
+      `(?:^|\\n)\\s*${NUM}(?:${LABELS})\\s*${SEP}\\s*([^\\n#]{3,600})`,
       'i'
     ),
-    // 2) Fallback — apenas a linha do rótulo
+    // 2) Rótulo + valor na LINHA SEGUINTE
     new RegExp(
-      `(?:^|\\n)[ \\t]*${NUM}${LABEL}${SEP}([^\\n\\r]{2,400})`,
+      `(?:^|\\n)\\s*${NUM}(?:${LABELS})\\s*${SEP}\\s*\\n+\\s*([^\\n#]{3,600})`,
+      'i'
+    ),
+    // 3) Bloco multilinha — para na próxima seção conhecida
+    new RegExp(
+      `(?:^|\\n)\\s*${NUM}(?:${LABELS})\\s*${SEP}\\s*\\n?\\s*` +
+      `([\\s\\S]{3,800}?)` +
+      `(?=\\n\\s*(?:${NUM})?(?:${STOP})` +
+      `|\\n\\s*\\n|$)`,
       'i'
     ),
   ];
@@ -363,10 +351,10 @@ function extractObjetoField(text) {
     const m = text.match(rx);
     if (m) {
       const value = m[1]
-        .replace(/\s+/g, ' ')
         .replace(/^[\s\-–—:.,;]+|[\s\-–—:.,;]+$/g, '')
+        .replace(/\s+/g, ' ')
         .trim();
-      if (value && value.length >= 2) return value.slice(0, 500);
+      if (value && value.length >= 3) return value.slice(0, 600);
     }
   }
   return null;
@@ -386,9 +374,10 @@ function classifyModalidadeValue(value) {
 }
 
 /* ============================================================================
- * v1.3.0 · Classificação EXPANDIDA do objeto
+ * v1.4.0 · Classificação do objeto
  * ----------------------------------------------------------------------------
- * Cobre TI, apoio administrativo, manutenção, serviços gerais etc.
+ * TI, apoio administrativo e manutenção são serviços COMUNS (Art. 6º, XLI)
+ * e por isso utilizam a modalidade Pregão (Art. 29).
  * ======================================================================== */
 function classifyObjetoValue(value) {
   if (!value) return null;
@@ -406,19 +395,17 @@ function classifyObjetoValue(value) {
   if (/(trabalho\s+tecnico|trabalho\s+cientifico|trabalho\s+artistico|projeto\s+arquitetonico|conteudo\s+artistico)/.test(v)) {
     return 'intelectual';
   }
-  // 4) TI / Tecnologia da Informação → serviço ESPECIAL
-  if (/(\bti\b|tecnologia\s+da\s+informacao|informatica|software|sistema\s+informat|computador|notebook|servidor\s+de\s+rede|datacenter|nuvem|cloud|licencas?\s+de\s+software|hardware|suporte\s+tecnico\s+de\s+ti|help\s*desk|service\s*desk)/.test(v)) {
-    return 'servicos-especiais';
-  }
-  // 5) Serviços comuns / apoio administrativo / manutenção
-  if (/(servico\s+comum|servicos\s+comuns|limpeza|conservacao|vigilancia|porteiro|apoio\s+administrativo|recepcionista|jardinagem|manutencao|manutencao\s+predial|manutencao\s+de\s+veiculos|motorista|copeira|servicos?\s+gerais|assistencia\s+administrativa|secretaria)/.test(v)) {
+  // 4) ⭐ TI · apoio administrativo · manutenção → SERVIÇOS COMUNS
+  if (
+    /(\bti\b|tecnologia\s+da\s+informacao|infraestrutura\s+de\s+ti|servicos?\s+de\s+ti|servicos?\s+de\s+apoio|apoio\s+administrativo|informatica|software|sistema\s+informat|computador|notebook|servidor\s+de\s+rede|datacenter|nuvem|cloud|licencas?\s+de\s+software|hardware|suporte\s+tecnico|help\s*desk|service\s*desk|manutencao|manutencao\s+predial|manutencao\s+de\s+veiculos|conservacao|limpeza|vigilancia|porteiro|recepcionista|jardinagem|motorista|copeira|servicos?\s+gerais|assistencia\s+administrativa|secretaria)/.test(v)
+  ) {
     return 'servicos-comuns';
   }
-  // 6) Bens comuns
+  // 5) Bens comuns
   if (/(bens?\s+comuns?|material\s+de\s+escritorio|generos?\s+alimenticios?|mobiliario|papelaria|uniformes|medicamentos?|equipamentos?|aquisicao\s+de\s+bens|compra\s+de\s+bens)/.test(v)) {
     return 'bens';
   }
-  // 7) Serviços genéricos (rede de segurança)
+  // 6) Serviços genéricos (rede de segurança)
   if (/(contratacao\s+de\s+servicos|prestacao\s+de\s+servicos|servicos?\s+de\s+\w+)/.test(v)) {
     return 'servicos-comuns';
   }
@@ -446,13 +433,13 @@ const MODALIDADE_LABEL_PT = {
 };
 
 const OBJETO_LABEL_PT = {
-  bens: 'Aquisição de bens',
-  'servicos-comuns': 'Serviços comuns',
-  'servicos-especiais': 'Serviços especiais / TI',
-  obras: 'Obras e serviços de engenharia',
-  alienacao: 'Alienação de bens',
-  intelectual: 'Trabalho técnico, científico ou artístico',
-  indefinido: 'Não identificado',
+  bens:                 'Aquisição de bens',
+  'servicos-comuns':    'Serviços comuns / TI',
+  'servicos-especiais': 'Serviços especiais',
+  obras:                'Obras e serviços de engenharia',
+  alienacao:            'Alienação de bens',
+  intelectual:          'Trabalho técnico, científico ou artístico',
+  indefinido:           'Não identificado',
 };
 
 function checkModalidadeCompatibilidade(objeto, modalidade) {
@@ -609,7 +596,6 @@ function runAudit() {
   /* ---------- Checagens (todas por LINHA) ---------- */
   const checks = [];
 
-  // Helper de formatação da evidência
   const fmtEvidence = (r, fallback) => {
     if (!r.snippet) return fallback;
     const prefix = r.status === 'danger' ? '⚠️ '
@@ -724,43 +710,74 @@ function runAudit() {
     });
   }
 
-  // 7. Compatibilidade Objeto × Modalidade
+  // 7. Compatibilidade Objeto × Modalidade (regras específicas + mensagem literal)
   {
     const compat = checkModalidadeCompatibilidade(objeto, modalidade);
     let status = compat.ok ? 'ok' : 'danger';
     let evidencia;
     let correcao = null;
 
+    // ---------- Leilão × objeto não-alienação ----------
     if (modalidade === 'leilao' && objeto !== 'alienacao' && objeto !== 'indefinido') {
       status = 'danger';
-      evidencia =
-        `❌ A modalidade Leilão é restrita à alienação de bens (móveis inservíveis ou imóveis). ` +
-        `O objeto identificado foi "${OBJETO_LABEL_PT[objeto] || objeto}".`;
-      correcao =
-        `Para "${OBJETO_LABEL_PT[objeto] || objeto}", utilize Pregão (bens/serviços comuns) ` +
-        `ou Concorrência (demais casos), conforme Art. 6º, XLI e Art. 29.`;
-    } else if (modalidade === 'pregao' && !['bens', 'servicos-comuns', 'indefinido'].includes(objeto)) {
+
+      if (objeto === 'servicos-comuns') {
+        // Mensagem literal solicitada na v1.4.0
+        evidencia =
+          `❌ A modalidade 'Leilão' não é compatível com o objeto 'Serviços comuns / TI'. ` +
+          `Para serviços comuns e de TI, utilize a modalidade Pregão (Art. 6º, XLI e Art. 29).`;
+        correcao =
+          `Substituir 'Leilão' por 'Pregão' no edital. ` +
+          `Fundamento: Lei 14.133/2021, Art. 6º, XLI e Art. 29.`;
+      } else {
+        evidencia =
+          `❌ A modalidade Leilão é restrita à alienação de bens (móveis inservíveis ou imóveis). ` +
+          `O objeto identificado foi "${OBJETO_LABEL_PT[objeto] || objeto}".`;
+        correcao =
+          `Para "${OBJETO_LABEL_PT[objeto] || objeto}", utilize Pregão (bens/serviços comuns) ` +
+          `ou Concorrência (demais casos), conforme Art. 6º, XLI e Art. 29.`;
+      }
+    }
+
+    // ---------- Pregão × objeto não-comum ----------
+    else if (modalidade === 'pregao' && !['bens', 'servicos-comuns', 'indefinido'].includes(objeto)) {
       status = 'danger';
       evidencia =
         `❌ O Pregão é obrigatório apenas para bens e serviços COMUNS. ` +
         `O objeto identificado foi "${OBJETO_LABEL_PT[objeto] || objeto}", incompatível.`;
       correcao = 'Para o objeto identificado, utilize Concorrência (Art. 28) ou Diálogo Competitivo (Art. 32).';
-    } else if (modalidade === 'concurso' && objeto !== 'intelectual' && objeto !== 'indefinido') {
+    }
+
+    // ---------- Concurso × não-intelectual ----------
+    else if (modalidade === 'concurso' && objeto !== 'intelectual' && objeto !== 'indefinido') {
       status = 'danger';
       evidencia =
         `❌ O Concurso é restrito a trabalho técnico, científico ou artístico (Art. 30). ` +
         `Objeto identificado: "${OBJETO_LABEL_PT[objeto] || objeto}".`;
       correcao = 'Utilize Pregão ou Concorrência para os demais objetos.';
-    } else if (modalidade === 'dialogo' && !['servicos-especiais', 'obras', 'indefinido'].includes(objeto)) {
+    }
+
+    // ---------- Diálogo × não-especial ----------
+    else if (modalidade === 'dialogo' && !['servicos-especiais', 'obras', 'indefinido'].includes(objeto)) {
       status = 'danger';
       evidencia =
-        `❌ O Diálogo Competitivo é restrito a inovação, complexidade técnica ou impossibilidade de especificação prévia (Art. 32). ` +
-        `Objeto identificado: "${OBJETO_LABEL_PT[objeto] || objeto}".`;
+        `❌ O Diálogo Competitivo é restrito a inovação, complexidade técnica ou impossibilidade ` +
+        `de especificação prévia (Art. 32). Objeto identificado: "${OBJETO_LABEL_PT[objeto] || objeto}".`;
       correcao = 'Utilize Pregão (bens/serviços comuns) ou Concorrência.';
-    } else if (compat.ok) {
-      evidencia = `✓ Modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" é adequada ao objeto "${OBJETO_LABEL_PT[objeto] || objeto}".`;
-    } else {
-      evidencia = `A modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" não é compatível com o objeto "${OBJETO_LABEL_PT[objeto] || objeto}".`;
+    }
+
+    // ---------- Compatível ----------
+    else if (compat.ok) {
+      evidencia =
+        `✓ Modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" é adequada ao objeto ` +
+        `"${OBJETO_LABEL_PT[objeto] || objeto}".`;
+    }
+
+    // ---------- Incompatível genérico ----------
+    else {
+      evidencia =
+        `A modalidade "${MODALIDADE_LABEL_PT[modalidade] || modalidade}" não é compatível com ` +
+        `o objeto "${OBJETO_LABEL_PT[objeto] || objeto}".`;
       correcao = `Modalidades compatíveis: ${compat.permitidas.map((m) => MODALIDADE_LABEL_PT[m]).join(', ')}.`;
     }
 
@@ -1176,7 +1193,7 @@ function exportJson() {
   if (!state.report) return;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '1.3.0',
+    versao: '1.4.0',
     baseNormativa: 'Lei nº 14.133/2021',
     ...state.report,
   };
@@ -1296,7 +1313,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#5b8cff;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v1.3.0 · Lei 14.133/2021 · análise por linha + termos autoritativos'
+    '· v1.4.0 · Lei 14.133/2021 · extração abrangente de objeto + análise por linha'
   );
 }
 
