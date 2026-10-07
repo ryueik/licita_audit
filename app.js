@@ -1,8 +1,8 @@
 /* ============================================================================
- * LicitaAudit · app.js — v6.4
+ * LicitaAudit · app.js — v6.5
  * ----------------------------------------------------------------------------
- * • Workspaces por processo · Sidebar fixa + menu mobile (hambúrguer)
- * • Core Engine de 30 verificações condicionais
+ * • Anti-Overflow Global Fix · Sidebar mobile com overlay
+ * • Workspaces por processo · Core Engine de 30 verificações condicionais
  * • Painel de Auditoria responsivo (grid de blocos, cards, tabela adaptativa)
  * • PDF institucional (5 blocos editoriais) com pdfMake
  * ========================================================================== */
@@ -11,11 +11,7 @@
 /* ==========================================================================
  * 1. ESTADO E DOM
  * ======================================================================== */
-const state = {
-  processos: [],
-  ativo: null,
-  isBusy: false,
-};
+const state = { processos: [], ativo: null, isBusy: false };
 
 const $  = (s, c = document) => c.querySelector(s);
 const $$ = (s, c = document) => Array.from(c.querySelectorAll(s));
@@ -376,7 +372,6 @@ function calcularRiscoProcesso(arquivos) {
   return 'BAIXO';
 }
 
-/* ---- Agrega os 6 blocos a partir dos arquivos do processo ---- */
 function agregarPorBloco(arquivos) {
   const agg = {};
   for (let b = 1; b <= 6; b++) {
@@ -402,18 +397,14 @@ function agregarPorBloco(arquivos) {
   return agg;
 }
 
-/* ---- Cor do nível de conformidade do bloco ---- */
 function nivelConformidade(pct) {
-  if (pct >= 90) return 'baixo';   // verde
-  if (pct >= 70) return 'medio';   // amarelo
-  return 'alto';                   // vermelho
+  if (pct >= 90) return 'baixo';
+  if (pct >= 70) return 'medio';
+  return 'alto';
 }
 
-/* ---- HTML do card de um bloco ---- */
 function renderBlocoCard(num, dados) {
-  const pct = dados.total > 0
-    ? Math.round((dados.ok / dados.total) * 100)
-    : 100;
+  const pct = dados.total > 0 ? Math.round((dados.ok / dados.total) * 100) : 100;
   const nivel = nivelConformidade(pct);
   return `
     <article class="bloco-card" data-bloco="${num}">
@@ -442,7 +433,6 @@ function renderBlocoCard(num, dados) {
   `;
 }
 
-/* ---- Tabela consolidada de achados do processo ---- */
 function renderAchadosConsolidados(arquivos) {
   const todos = [];
   arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados))
@@ -492,8 +482,8 @@ function renderAchadosConsolidados(arquivos) {
   }).join('');
 
   return `
-    <div class="tabela-responsive-container">
-      <table class="tabela-arquivos tabela-achados">
+    <div class="tabela-responsive-wrapper">
+      <table class="tabela-arquivos tabela-auditoria">
         <thead>
           <tr>
             <th style="width:12%;">Grau</th>
@@ -889,7 +879,7 @@ function renderWorkspace() {
           ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;">
                Nenhum arquivo adicionado. Use a área abaixo para enviar documentos.
              </p>`
-          : `<div class="tabela-responsive-container">
+          : `<div class="tabela-responsive-wrapper">
               <table class="tabela-arquivos">
                 <thead>
                   <tr>
@@ -1524,7 +1514,7 @@ function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '6.4.0',
+    versao: '6.5.0',
     exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags,
@@ -1692,7 +1682,7 @@ function bindEventosGlobais() {
   els.sidebarOverlay?.addEventListener('click', fecharSidebar);
 
   els.sidebar?.addEventListener('click', e => {
-    if (window.matchMedia('(max-width: 767px)').matches &&
+    if (window.matchMedia('(max-width: 768px)').matches &&
         e.target.closest('button, .btn')) {
       fecharSidebar();
     }
@@ -1732,7 +1722,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v6.4 · Painel de Auditoria Responsivo'
+    '· v6.5 · Anti-Overflow Global Fix + Painel Responsivo'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
