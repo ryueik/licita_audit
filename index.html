@@ -83,7 +83,7 @@
           </select>
         </label>
         <p style="font-size:10.5px; color:var(--text-dim); margin-top:8px; line-height:1.5;">
-          Aplica-se a <strong>todos</strong> os processos abertos. Cada processo pode sobrescrever esses valores individualmente.
+          Aplica-se a <strong>todos</strong> os processos abertos. Cada processo pode sobrescrever individualmente.
         </p>
       </section>
 
@@ -124,7 +124,7 @@
           <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke-linejoin="round" /></svg>
         </div>
         <h3>Comece criando um Processo</h3>
-        <p>Organize múltiplos documentos, anexe arquivos do <strong>LicitaReq</strong>, atribua metadados, registre notas e audite qualquer combinação de modalidade × natureza × critério prevista na Lei nº 14.133/2021.</p>
+        <p>Organize múltiplos documentos, anexe arquivos do <strong>LicitaReq</strong>, atribua metadados, registre notas e audite qualquer combinação prevista na Lei nº 14.133/2021.</p>
         <button class="btn btn--primary" id="btnNovoProcessoEmpty" type="button">+ Criar Primeiro Processo</button>
       </section>
 
@@ -132,7 +132,7 @@
     </main>
   </div>
 
-  <!-- Modal genérico (detalhes de arquivo e outras ações) -->
+  <!-- Modal genérico -->
   <div id="modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
     <div class="modal__overlay" data-close-modal></div>
     <div class="modal__box">
@@ -153,6 +153,32 @@
         <button class="modal__close" type="button" data-close-modal-crit aria-label="Fechar">&times;</button>
       </header>
       <div id="modalCriteriosBody" class="modal__body"></div>
+    </div>
+  </div>
+
+  <!-- Modal Visualizador de Texto -->
+  <div id="modalVisualizador" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalVizTitulo">
+    <div class="modal__overlay" data-close-modal-viz></div>
+    <div class="modal__box modal__box--wide">
+      <header class="modal__head">
+        <h3 id="modalVizTitulo">Visualização de Texto</h3>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button class="btn btn--soft btn--sm" id="btnCopiarTextoArq" type="button" title="Copiar todo o texto">📋 Copiar</button>
+          <button class="modal__close" type="button" data-close-modal-viz aria-label="Fechar">&times;</button>
+        </div>
+      </header>
+      <div class="modal__body">
+        <div class="viewer-meta">
+          <span class="viewer-meta__name" id="viewerFileName">—</span>
+          <span class="viewer-meta__info" id="viewerFileInfo">—</span>
+        </div>
+        <pre id="viewerText" class="viewer-text" tabindex="0" aria-label="Conteúdo textual do arquivo"></pre>
+        <div class="viewer-footer">
+          <span class="viewer-footer__hint">
+            <strong>Esc</strong> fecha · <strong>Ctrl/Cmd + A</strong> seleciona tudo
+          </span>
+        </div>
+      </div>
     </div>
   </div>
 
