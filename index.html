@@ -31,7 +31,6 @@
 
 <body>
   <div class="app">
-    <!-- ============================ SIDEBAR ============================ -->
     <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
       <header class="brand">
         <div class="brand__mark" aria-hidden="true">LA</div>
@@ -41,7 +40,6 @@
         </div>
       </header>
 
-      <!-- Ações rápidas -->
       <section class="panel">
         <button id="btnNovoProcesso" class="btn btn--primary btn--block" type="button">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -55,7 +53,6 @@
         </button>
       </section>
 
-      <!-- Parâmetros -->
       <section class="panel">
         <h2 class="panel__title">Parâmetros</h2>
 
@@ -100,17 +97,16 @@
         </label>
       </section>
 
-      <!-- Exportação -->
       <section class="panel">
         <h2 class="panel__title">Exportação</h2>
         <button id="pdfAllBtn" class="btn btn--soft btn--block" type="button">
-          Exportar PDFs (Todos)
+          📦 Exportar PDFs (Todos)
         </button>
         <button id="jsonBtn" class="btn btn--soft btn--block" type="button">
-          Salvar JSON
+          💾 Salvar JSON
         </button>
         <button id="jsonLoadBtn" class="btn btn--soft btn--block" type="button">
-          Carregar JSON
+          📥 Carregar JSON
         </button>
         <input id="jsonLoadInput" type="file" accept=".json,application/json" hidden />
       </section>
@@ -120,9 +116,7 @@
       </p>
     </aside>
 
-    <!-- ============================= MAIN ============================= -->
     <main class="main">
-      <!-- Topbar -->
       <header class="topbar">
         <div class="topbar__title">
           <h2>Painel de Auditoria</h2>
@@ -145,10 +139,8 @@
         </button>
       </header>
 
-      <!-- Tabs de Processos -->
       <nav id="tabsProcessos" class="tabs" role="tablist" aria-label="Navegação de processos"></nav>
 
-      <!-- Estado vazio -->
       <section id="emptyState" class="empty-state">
         <div class="empty-state__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4">
@@ -165,12 +157,10 @@
         </button>
       </section>
 
-      <!-- Workspace do Processo Ativo -->
       <section id="workspace" class="workspace is-hidden" aria-live="polite"></section>
     </main>
   </div>
 
-  <!-- Modal de detalhes -->
   <div id="modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
     <div class="modal__overlay" data-close-modal></div>
     <div class="modal__box">
@@ -182,7 +172,6 @@
     </div>
   </div>
 
-  <!-- Loader -->
   <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
     <div class="loader__box">
       <div class="spinner" aria-hidden="true"></div>
@@ -190,7 +179,6 @@
     </div>
   </div>
 
-  <!-- Toast -->
   <div id="toast" class="toast is-hidden" role="alert"></div>
 </body>
 </html>
