@@ -31,6 +31,10 @@
 
 <body>
   <div class="app">
+
+    <!-- Overlay mobile para fechar sidebar -->
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+
     <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
       <header class="brand">
         <div class="brand__mark" aria-hidden="true">LA</div>
@@ -118,10 +122,26 @@
 
     <main class="main">
       <header class="topbar">
-        <div class="topbar__title">
-          <h2>Painel de Auditoria</h2>
-          <p id="topbarSubtitle">Nenhum processo criado</p>
+        <div class="topbar__left">
+          <button
+            id="sidebarToggle"
+            class="sidebar-toggle"
+            type="button"
+            aria-label="Abrir menu"
+            aria-controls="sidebar"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" />
+            </svg>
+          </button>
+
+          <div class="topbar__title">
+            <h2>Painel de Auditoria</h2>
+            <p id="topbarSubtitle">Nenhum processo criado</p>
+          </div>
         </div>
+
         <button
           id="themeToggle"
           class="icon-btn"
