@@ -5,42 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
-  <meta
-    name="description"
-    content="Ferramenta de auditoria e conformidade para processos licitatórios com base na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT."
-  />
+  <meta name="description" content="Ferramenta de auditoria e conformidade para processos licitatórios com base na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT." />
 
-  <!-- ===================== Favicon (SVG inline) ===================== -->
   <link
     rel="icon"
     type="image/svg+xml"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>"
   />
-  <!-- Fallback para navegadores antigos que não suportam SVG favicon -->
   <link rel="alternate icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
 
-  <!-- ===================== Bibliotecas de terceiros (CDN) ===================== -->
-  <!-- PDF.js: extração de texto de arquivos PDF no navegador -->
-  <script
-    defer
-    src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
-    referrerpolicy="no-referrer"
-  ></script>
-  <!-- Mammoth.js: extração de texto de arquivos .docx -->
-  <script
-    defer
-    src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"
-    referrerpolicy="no-referrer"
-  ></script>
+  <!-- PDF.js -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" referrerpolicy="no-referrer"></script>
+  <!-- Mammoth.js -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" referrerpolicy="no-referrer"></script>
+  <!-- pdfMake (relatório oficial) -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
 
   <link rel="stylesheet" href="style.css" />
   <script type="module" src="app.js"></script>
 </head>
 
 <body>
-  <!-- ============================ APLICAÇÃO ============================ -->
   <div class="app">
-    <!-- ------------------------------ SIDEBAR ------------------------------ -->
     <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
       <header class="brand">
         <div class="brand__mark" aria-hidden="true">LA</div>
@@ -137,12 +124,22 @@
       <!-- 3. Exportação -->
       <section class="panel panel--last">
         <h2 class="panel__title"><span class="step">3</span> Relatório</h2>
+
+        <button id="pdfBtn" class="btn btn--primary" type="button" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-linejoin="round" />
+            <path d="M14 2v6h6M9 13h6M9 17h6" stroke-linecap="round" />
+          </svg>
+          Exportar Relatório (PDF)
+        </button>
+
         <button id="printBtn" class="btn btn--soft" type="button" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v7H8z" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          Imprimir / Salvar PDF
+          Imprimir / Salvar PDF (Navegador)
         </button>
+
         <button id="jsonBtn" class="btn btn--soft" type="button" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <path d="M12 3v12m0 0-4-4m4 4 4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
@@ -157,7 +154,6 @@
       </p>
     </aside>
 
-    <!-- ------------------------------- MAIN ------------------------------- -->
     <main class="main">
       <header class="topbar">
         <div class="topbar__title">
@@ -181,7 +177,6 @@
         </button>
       </header>
 
-      <!-- Estado vazio -->
       <section id="emptyState" class="empty-state">
         <div class="empty-state__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
@@ -205,12 +200,10 @@
         </ul>
       </section>
 
-      <!-- Relatório (renderizado dinamicamente) -->
       <div id="report" class="report is-hidden" aria-live="polite"></div>
     </main>
   </div>
 
-  <!-- Overlay de carregamento -->
   <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
     <div class="loader__box">
       <div class="spinner" aria-hidden="true"></div>
@@ -218,7 +211,6 @@
     </div>
   </div>
 
-  <!-- Toast -->
   <div id="toast" class="toast is-hidden" role="alert"></div>
 </body>
 </html>
