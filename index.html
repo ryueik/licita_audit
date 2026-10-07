@@ -8,17 +8,25 @@
   <meta
     name="description"
     content="Ferramenta de auditoria e conformidade para processos licitatórios com base na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT."
+  />
 
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>">
+  <!-- ===================== Favicon (SVG inline) ===================== -->
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>"
+  />
+  <!-- Fallback para navegadores antigos que não suportam SVG favicon -->
+  <link rel="alternate icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
 
-
-
-  <!-- Bibliotecas de terceiros (CDN) -->
+  <!-- ===================== Bibliotecas de terceiros (CDN) ===================== -->
+  <!-- PDF.js: extração de texto de arquivos PDF no navegador -->
   <script
     defer
     src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
     referrerpolicy="no-referrer"
   ></script>
+  <!-- Mammoth.js: extração de texto de arquivos .docx -->
   <script
     defer
     src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"
@@ -30,11 +38,12 @@
 </head>
 
 <body>
+  <!-- ============================ APLICAÇÃO ============================ -->
   <div class="app">
-    <!-- SIDEBAR -->
+    <!-- ------------------------------ SIDEBAR ------------------------------ -->
     <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
       <header class="brand">
-        <div class="brand__mark" aria-hidden="true">LA</div>
+        <div class="brand__mark" aria-hidden="true">§</div>
         <div class="brand__text">
           <h1>LicitaAudit</h1>
           <p>Conformidade · Lei 14.133/2021</p>
@@ -89,8 +98,8 @@
           <select id="paramObjeto" class="select">
             <option value="auto">Detectar automaticamente</option>
             <option value="bens">Aquisição de bens</option>
-            <option value="servicos-comuns">Serviços comuns</option>
-            <option value="servicos-especiais">Serviços especiais / técnicos</option>
+            <option value="servicos-comuns">Serviços comuns / TI</option>
+            <option value="servicos-especiais">Serviços especiais</option>
             <option value="obras">Obras e serviços de engenharia</option>
             <option value="alienacao">Alienação de bens</option>
             <option value="intelectual">Trabalho técnico, científico ou artístico</option>
@@ -143,11 +152,12 @@
       </section>
 
       <p class="disclaimer">
-        Ferramenta de apoio à decisão. Não substitui parecer jurídico nem a análise do agente de contratação.
+        Ferramenta de apoio à decisão. Não substitui parecer jurídico nem a análise
+        do agente de contratação.
       </p>
     </aside>
 
-    <!-- MAIN CONTENT -->
+    <!-- ------------------------------- MAIN ------------------------------- -->
     <main class="main">
       <header class="topbar">
         <div class="topbar__title">
@@ -195,12 +205,12 @@
         </ul>
       </section>
 
-      <!-- Relatório -->
+      <!-- Relatório (renderizado dinamicamente) -->
       <div id="report" class="report is-hidden" aria-live="polite"></div>
     </main>
   </div>
 
-  <!-- Overlay de carregamento e Toast -->
+  <!-- Overlay de carregamento -->
   <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
     <div class="loader__box">
       <div class="spinner" aria-hidden="true"></div>
@@ -208,6 +218,7 @@
     </div>
   </div>
 
+  <!-- Toast -->
   <div id="toast" class="toast is-hidden" role="alert"></div>
 </body>
 </html>
