@@ -854,3 +854,16 @@ table.matrix tbody tr:hover { background: var(--surface-2); }
     transition-duration: 0.01ms !important;
   }
 }
+
+kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 var(--border);
+  margin: 0 1px;
+}
