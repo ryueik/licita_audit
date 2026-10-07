@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
-  <title>LicitaAudit · Core Engine · Lei 14.133/2021</title>
-  <meta name="description" content="Auditoria de conformidade para processos licitatórios com 30 verificações nucleares condicionais baseadas na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT." />
+  <title>LicitaAudit · Workspaces Multi-Processo · Lei 14.133/2021</title>
+  <meta name="description" content="Auditoria de conformidade para processos licitatórios com workspaces por processo, 30 verificações nucleares condicionais e exportação individual/consolidada." />
 
   <link
     rel="icon"
@@ -30,49 +30,26 @@
         <div class="brand__mark" aria-hidden="true">LA</div>
         <div class="brand__text">
           <h1>LicitaAudit</h1>
-          <p>30 verificações condicionais · Lei 14.133/2021</p>
+          <p>Workspaces · Lei 14.133/2021</p>
         </div>
       </header>
 
+      <!-- 1. Novo processo -->
       <section class="panel">
-        <h2 class="panel__title"><span class="step">1</span> Documentos do processo</h2>
-
-        <input
-          id="fileInput"
-          type="file"
-          multiple
-          accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
-          hidden
-        />
-
-        <div
-          id="dropzone"
-          class="dropzone"
-          role="button"
-          tabindex="0"
-          aria-label="Arraste arquivos, clique para selecionar ou cole com Ctrl+V."
-        >
-          <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round" />
+        <h2 class="panel__title"><span class="step">1</span> Processos (Workspaces)</h2>
+        <button id="btnNovoProcesso" class="btn btn--primary btn--block" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 5v14m-7-7h14" stroke-linecap="round" />
           </svg>
-          <p class="dropzone__title"><strong>Arraste, clique ou cole</strong> os arquivos aqui</p>
-          <p class="dropzone__hint">PDF, DOCX, DOC, TXT · ou pressione <kbd>Ctrl</kbd>+<kbd>V</kbd></p>
-        </div>
+          Criar Novo Processo
+        </button>
 
-        <ul id="fileList" class="file-list" aria-live="polite"></ul>
-
-        <div class="panel__actions">
-          <button id="analyzeBtn" class="btn btn--primary" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-              <path d="m21 21-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" stroke-linecap="round" />
-            </svg>
-            Analisar (30 verificações)
-          </button>
-          <button id="clearBtn" class="btn btn--ghost" type="button">Limpar</button>
+        <div class="panel__actions" style="grid-template-columns:1fr;">
+          <button id="btnCarregarExemplo" class="btn btn--ghost" type="button">Carregar Exemplo</button>
         </div>
       </section>
 
+      <!-- 2. Parâmetros -->
       <section class="panel">
         <h2 class="panel__title"><span class="step">2</span> Parâmetros da análise</h2>
 
@@ -117,30 +94,31 @@
         </label>
       </section>
 
+      <!-- 3. Exportação Global -->
       <section class="panel panel--last">
-        <h2 class="panel__title"><span class="step">3</span> Relatório</h2>
+        <h2 class="panel__title"><span class="step">3</span> Exportação Global</h2>
 
-        <button id="pdfBtn" class="btn btn--primary btn--block" type="button" disabled>
+        <button id="pdfAllBtn" class="btn btn--soft" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-linejoin="round" />
-            <path d="M14 2v6h6M9 13h6M9 17h6" stroke-linecap="round" />
+            <path d="M3 7v10a2 2 0 0 0 2 2h6M3 7a2 2 0 0 1 2-2h6M3 7h8M11 5v14M17 12h4m-2-2v4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          Exportar Relatório (PDF)
+          📦 Exportar PDFs de Todos os Processos
         </button>
 
-        <button id="printBtn" class="btn btn--soft" type="button" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-            <path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v7H8z" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          Imprimir / Salvar PDF (Navegador)
-        </button>
-
-        <button id="jsonBtn" class="btn btn--soft" type="button" disabled>
+        <button id="jsonBtn" class="btn btn--soft" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <path d="M12 3v12m0 0-4-4m4 4 4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          Exportar JSON
+          💾 Exportar JSON da Estrutura
         </button>
+
+        <button id="jsonLoadBtn" class="btn btn--soft" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          📥 Carregar JSON Salvo
+        </button>
+        <input id="jsonLoadInput" type="file" accept=".json,application/json" hidden />
       </section>
 
       <p class="disclaimer">
@@ -152,8 +130,8 @@
     <main class="main">
       <header class="topbar">
         <div class="topbar__title">
-          <h2>Painel de Auditoria</h2>
-          <p id="topbarSubtitle">Nenhum documento carregado</p>
+          <h2>Painel de Processos</h2>
+          <p id="topbarSubtitle">Nenhum processo criado</p>
         </div>
         <button
           id="themeToggle"
@@ -172,36 +150,48 @@
         </button>
       </header>
 
+      <!-- Estado vazio -->
       <section id="emptyState" class="empty-state">
         <div class="empty-state__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
-            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" stroke-linejoin="round" />
-            <path d="M14 3v5h5M9 13h6M9 17h4" stroke-linecap="round" />
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke-linejoin="round" />
           </svg>
         </div>
-        <h3>Comece carregando os documentos do processo</h3>
+        <h3>Crie seu primeiro Processo (Workspace)</h3>
         <p>
-          Edital, TR, ETP, Projeto Básico, justificativas de dispensa ou inexigibilidade.
-          O texto é extraído <strong>localmente no seu navegador</strong> — nenhum arquivo é enviado a servidores.
+          Organize múltiplos documentos por processo, atribua cores e tags,
+          e analise cada um separadamente ou de forma consolidada.
         </p>
         <ul class="empty-state__tags">
-          <li>30 verificações nucleares</li>
-          <li>6 blocos temáticos</li>
-          <li>Score dinâmico condicional</li>
-          <li>Regras N/A não penalizam</li>
-          <li>PDF executivo</li>
-          <li>JSON estruturado</li>
+          <li>Cards por processo</li>
+          <li>Cores e tags customizadas</li>
+          <li>Análise individual e consolidada</li>
+          <li>PDF por arquivo e por processo</li>
+          <li>JSON exportável</li>
         </ul>
       </section>
 
-      <div id="report" class="report is-hidden" aria-live="polite"></div>
+      <!-- Grid de Processos -->
+      <section id="gridProcessos" class="grid-processos" aria-live="polite"></section>
     </main>
+  </div>
+
+  <!-- Modal de detalhes do arquivo -->
+  <div id="modalDetalhes" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
+    <div class="modal__overlay" data-close-modal></div>
+    <div class="modal__box">
+      <header class="modal__head">
+        <h3 id="modalTitulo">Detalhes do Arquivo</h3>
+        <button class="modal__close" type="button" data-close-modal aria-label="Fechar">&times;</button>
+      </header>
+      <div id="modalConteudo" class="modal__body"></div>
+    </div>
   </div>
 
   <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
     <div class="loader__box">
       <div class="spinner" aria-hidden="true"></div>
-      <p id="loaderText">Extraindo texto dos documentos…</p>
+      <p id="loaderText">Processando…</p>
     </div>
   </div>
 
