@@ -1,8 +1,9 @@
 /* ============================================================================
- * LicitaAudit · app.js — v6.3
+ * LicitaAudit · app.js — v6.4
  * ----------------------------------------------------------------------------
- * • Workspaces por processo · Sidebar fixo · Cores dinâmicas
+ * • Workspaces por processo · Sidebar fixa + menu mobile (hambúrguer)
  * • Core Engine de 30 verificações condicionais
+ * • Painel de Auditoria responsivo (grid de blocos, cards, tabela adaptativa)
  * • PDF institucional (5 blocos editoriais) com pdfMake
  * ========================================================================== */
 'use strict';
@@ -41,6 +42,9 @@ const els = {
   modal:                $('#modal'),
   modalTitulo:          $('#modalTitulo'),
   modalBody:            $('#modalBody'),
+  sidebar:              $('#sidebar'),
+  sidebarToggle:        $('#sidebarToggle'),
+  sidebarOverlay:       $('#sidebarOverlay'),
 };
 
 /* ==========================================================================
@@ -372,6 +376,138 @@ function calcularRiscoProcesso(arquivos) {
   return 'BAIXO';
 }
 
+/* ---- Agrega os 6 blocos a partir dos arquivos do processo ---- */
+function agregarPorBloco(arquivos) {
+  const agg = {};
+  for (let b = 1; b <= 6; b++) {
+    agg[b] = { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0,
+               criticas: 0, medias: 0, baixas: 0 };
+  }
+  arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados))
+    .forEach(a => {
+      a.resultados.filter(r => r.aplicavel).forEach(r => {
+        const b = r.bloco;
+        if (!agg[b]) return;
+        agg[b].total++;
+        if (r.conforme) {
+          agg[b].ok++;
+        } else {
+          agg[b].falha++;
+          if (r.severidade === 'CRITICA')      agg[b].criticas++;
+          else if (r.severidade === 'MEDIA')   agg[b].medias++;
+          else                                 agg[b].baixas++;
+        }
+      });
+    });
+  return agg;
+}
+
+/* ---- Cor do nível de conformidade do bloco ---- */
+function nivelConformidade(pct) {
+  if (pct >= 90) return 'baixo';   // verde
+  if (pct >= 70) return 'medio';   // amarelo
+  return 'alto';                   // vermelho
+}
+
+/* ---- HTML do card de um bloco ---- */
+function renderBlocoCard(num, dados) {
+  const pct = dados.total > 0
+    ? Math.round((dados.ok / dados.total) * 100)
+    : 100;
+  const nivel = nivelConformidade(pct);
+  return `
+    <article class="bloco-card" data-bloco="${num}">
+      <header class="bloco-card__head">
+        <span class="bloco-card__num">B${num}</span>
+        <h4 class="bloco-card__titulo" title="${escapeHtml(dados.titulo)}">
+          ${escapeHtml(dados.titulo)}
+        </h4>
+        <span class="bloco-card__pct">${pct}%</span>
+      </header>
+
+      <div class="bloco-card__progress" role="progressbar"
+           aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+        <div class="bloco-card__progress-bar"
+             data-nivel="${nivel}" style="width:${pct}%;"></div>
+      </div>
+
+      <footer class="bloco-card__foot">
+        <span class="chip chip--ok">✓ ${dados.ok}/${dados.total}</span>
+        ${dados.criticas ? `<span class="chip chip--danger">● ${dados.criticas} crítica${dados.criticas>1?'s':''}</span>` : ''}
+        ${dados.medias   ? `<span class="chip chip--warn">● ${dados.medias} média${dados.medias>1?'s':''}</span>`   : ''}
+        ${(!dados.criticas && !dados.medias && dados.baixas)
+          ? `<span class="chip">● ${dados.baixas} baixa${dados.baixas>1?'s':''}</span>` : ''}
+      </footer>
+    </article>
+  `;
+}
+
+/* ---- Tabela consolidada de achados do processo ---- */
+function renderAchadosConsolidados(arquivos) {
+  const todos = [];
+  arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados))
+    .forEach(a => {
+      a.resultados.filter(r => r.aplicavel && !r.conforme).forEach(r => {
+        todos.push({
+          arquivo: a.nomeArquivo,
+          id: r.id, bloco: r.bloco, nome: r.nome,
+          fundamento: r.fundamento,
+          severidade: r.severidade,
+          mensagem: r.mensagemFalha,
+          recomendacao: r.recomendacao,
+        });
+      });
+    });
+
+  const ordem = { CRITICA: 0, MEDIA: 1, BAIXA: 2 };
+  todos.sort((a, b) => (ordem[a.severidade] - ordem[b.severidade]) || (a.bloco - b.bloco));
+
+  if (!todos.length) {
+    return `<p style="padding:1.1rem 1.25rem;color:var(--ok);font-size:13px;font-weight:600;">
+      ✓ Nenhuma inconformidade identificada no processo.
+    </p>`;
+  }
+
+  const linhas = todos.map(t => {
+    const sev = t.severidade === 'CRITICA' ? 'alto'
+              : t.severidade === 'MEDIA'   ? 'medio' : 'baixo';
+    const sevLabel = t.severidade === 'CRITICA' ? 'Crítica'
+                   : t.severidade === 'MEDIA'   ? 'Média' : 'Baixa';
+    return `
+      <tr>
+        <td data-label="Grau">
+          <span class="badge badge--${sev}">${sevLabel}</span>
+        </td>
+        <td data-label="Bloco"><strong>B${t.bloco}</strong> · ${escapeHtml(t.nome)}</td>
+        <td data-label="Arquivo" class="texto-recortado" title="${escapeHtml(t.arquivo)}">
+          ${escapeHtml(truncate(t.arquivo, 30))}
+        </td>
+        <td data-label="Fundamento" class="texto-longo-quebra">
+          <em style="color:var(--brand);font-family:var(--font-mono);font-size:11px;">
+            ${escapeHtml(t.fundamento)}
+          </em>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="tabela-responsive-container">
+      <table class="tabela-arquivos tabela-achados">
+        <thead>
+          <tr>
+            <th style="width:12%;">Grau</th>
+            <th style="width:28%;">Bloco / Verificação</th>
+            <th style="width:22%;">Arquivo</th>
+            <th style="width:38%;">Fundamento Legal</th>
+          </tr>
+        </thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 /* ==========================================================================
  * 7. ANÁLISE INDIVIDUAL DE TEXTO
  * ======================================================================== */
@@ -648,105 +784,145 @@ function renderWorkspace() {
   const p = getProcessoAtivo();
   if (!p) return;
 
-  const scoreConsolidado = calcularScoreProcesso(p.arquivos);
-  const riscoConsolidado = calcularRiscoProcesso(p.arquivos);
-  const corRisco = riscoConsolidado === 'ALTO' ? 'var(--danger)'
+  const scoreConsolidado  = calcularScoreProcesso(p.arquivos);
+  const riscoConsolidado  = calcularRiscoProcesso(p.arquivos);
+  const arquivosOk        = p.arquivos.filter(a => a.status === 'ok');
+
+  const corRisco = riscoConsolidado === 'ALTO'  ? 'var(--danger)'
                  : riscoConsolidado === 'MÉDIO' ? 'var(--warn)'
                  : riscoConsolidado === 'BAIXO' ? 'var(--ok)'
                  : 'var(--text-dim)';
-  const badgeCls = riscoConsolidado === 'ALTO' ? 'badge--alto'
+  const badgeCls = riscoConsolidado === 'ALTO'  ? 'badge--alto'
                  : riscoConsolidado === 'MÉDIO' ? 'badge--medio'
                  : riscoConsolidado === 'BAIXO' ? 'badge--baixo'
                  : 'badge--neutro';
+  const emoji = riscoConsolidado === 'ALTO'  ? '🔴'
+              : riscoConsolidado === 'MÉDIO' ? '🟡'
+              : riscoConsolidado === 'BAIXO' ? '🟢' : '⚪';
 
-  const totalArquivos = p.arquivos.length;
-  const totalAplicaveis = p.arquivos.filter(a => a.status === 'ok').reduce((s, a) => s + (a.estatisticas?.aplicaveis || 0), 0);
-  const totalInconf = p.arquivos.filter(a => a.status === 'ok').reduce((s, a) => s + (a.estatisticas?.falha || 0), 0);
+  const totalArquivos   = p.arquivos.length;
+  const totalAplicaveis = arquivosOk.reduce((s, a) => s + (a.estatisticas?.aplicaveis || 0), 0);
+  const totalInconf     = arquivosOk.reduce((s, a) => s + (a.estatisticas?.falha || 0), 0);
 
   const dashArray = 2 * Math.PI * 44;
   const dashValue = (scoreConsolidado / 100) * dashArray;
 
+  const blocosAgg = agregarPorBloco(arquivosOk);
+  const blocosHtml = [1,2,3,4,5,6]
+    .map(b => renderBlocoCard(b, blocosAgg[b]))
+    .join('');
+
   els.workspace.innerHTML = `
-    <header class="ws-header" style="border-top-color:${p.cor};" data-proc="${p.id}">
-      <div class="ws-header__left">
-        <input type="text" class="ws-nome" value="${escapeHtml(p.nome)}" data-rename="${p.id}" title="Clique para renomear" />
-        <div class="ws-tags">
-          <span class="processo-cor-indicator" style="background:${p.cor};" aria-hidden="true"></span>
-          ${p.tags.map(t => `<span class="tag">${escapeHtml(t)}<b data-remove-tag="${escapeHtml(t)}" data-proc="${p.id}">&times;</b></span>`).join('')}
-          <button class="tag-add" data-add-tag="${p.id}" type="button">+ Tag</button>
-        </div>
-      </div>
-      <div class="ws-header__right">
-        <input type="color" class="color-picker" value="${p.cor}" data-color="${p.id}" title="Cor de identificação" />
-        <button class="btn-icon danger" data-delete-proc="${p.id}" title="Excluir processo" type="button">🗑</button>
-      </div>
-    </header>
+    <div class="painel-auditoria">
 
-    <section class="ws-metrica">
-      <div class="ws-metrica__gauge" role="img" aria-label="Conformidade: ${scoreConsolidado}%">
-        <svg viewBox="0 0 100 100">
-          <circle class="track" cx="50" cy="50" r="44"></circle>
-          <circle class="value" cx="50" cy="50" r="44"
-            style="stroke:${corRisco}; stroke-dasharray:${dashValue} ${dashArray};"
-            data-score="${scoreConsolidado}"></circle>
-        </svg>
-        <div class="ws-metrica__numero">${scoreConsolidado}<small>%</small></div>
-      </div>
-      <div class="ws-metrica__info">
-        <h3>Conformidade Global do Processo</h3>
-        <p>${totalArquivos === 0
-          ? 'Adicione arquivos para calcular a conformidade.'
-          : `${totalArquivos} documento(s) · ${totalAplicaveis} regras aplicáveis · ${totalInconf} inconformidade(s)`}</p>
-        <div class="meta-line">
-          <span><strong>${totalArquivos}</strong> arquivo(s)</span>
-          <span><strong>${totalAplicaveis}</strong> verificações</span>
-          <span><strong>${totalInconf}</strong> achados</span>
+      <header class="ws-header" style="border-top-color:${p.cor};" data-proc="${p.id}">
+        <div class="ws-header__left">
+          <input type="text" class="ws-nome" value="${escapeHtml(p.nome)}"
+                 data-rename="${p.id}" title="Clique para renomear" />
+          <div class="ws-tags">
+            <span class="processo-cor-indicator" style="background:${p.cor};" aria-hidden="true"></span>
+            ${p.tags.map(t => `<span class="tag">${escapeHtml(t)}<b data-remove-tag="${escapeHtml(t)}" data-proc="${p.id}">&times;</b></span>`).join('')}
+            <button class="tag-add" data-add-tag="${p.id}" type="button">+ Tag</button>
+          </div>
         </div>
-      </div>
-      <div>
-        <span class="badge ${badgeCls}">${riscoConsolidado === 'ALTO' ? '🔴' : riscoConsolidado === 'MÉDIO' ? '🟡' : riscoConsolidado === 'BAIXO' ? '🟢' : '⚪'} ${riscoConsolidado}</span>
-      </div>
-    </section>
-
-    <section class="ws-secao">
-      <header class="ws-secao__head">
-        <span class="ws-secao__title">Documentos do Processo</span>
-        <span class="ws-secao__count">${totalArquivos}</span>
+        <div class="ws-header__right">
+          <input type="color" class="color-picker" value="${p.cor}" data-color="${p.id}" title="Cor de identificação" />
+          <button class="btn-icon danger" data-delete-proc="${p.id}" title="Excluir processo" type="button">🗑</button>
+        </div>
       </header>
-      ${totalArquivos === 0
-        ? `<p style="padding: 20px 18px; color: var(--text-dim); font-size: 13px; font-style: italic;">Nenhum arquivo adicionado. Use a área abaixo para enviar documentos.</p>`
-        : `<div style="overflow-x: auto;">
-            <table class="tabela-arquivos">
-              <thead>
-                <tr>
-                  <th class="col-arquivo">Arquivo</th>
-                  <th class="col-score">Conformidade</th>
-                  <th class="col-risco">Risco</th>
-                  <th class="col-acoes">Ações</th>
-                </tr>
-              </thead>
-              <tbody>${p.arquivos.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
-            </table>
-          </div>`
-      }
 
-      <div class="ws-dropzone" data-drop="${p.id}" tabindex="0" role="button">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round" />
-        </svg>
-        <p>Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
-        <p style="font-size:11.5px;color:var(--text-dim);">PDF · DOCX · DOC · TXT</p>
+      <section class="painel-metricas-topo" aria-label="Métricas consolidadas">
+        <div class="ws-metrica__gauge" role="img" aria-label="Conformidade: ${scoreConsolidado}%">
+          <svg viewBox="0 0 100 100">
+            <circle class="track" cx="50" cy="50" r="44"></circle>
+            <circle class="value" cx="50" cy="50" r="44"
+              style="stroke:${corRisco}; stroke-dasharray:${dashValue} ${dashArray};"
+              data-score="${scoreConsolidado}"></circle>
+          </svg>
+          <div class="ws-metrica__numero">${scoreConsolidado}<small>%</small></div>
+        </div>
+
+        <div class="ws-metrica__info" style="flex:1;min-width:0;">
+          <h3>Conformidade Global do Processo</h3>
+          <p>${totalArquivos === 0
+            ? 'Adicione arquivos para calcular a conformidade.'
+            : `${totalArquivos} documento(s) · ${totalAplicaveis} regras aplicáveis · ${totalInconf} inconformidade(s)`}</p>
+          <div class="meta-line">
+            <span><strong>${totalArquivos}</strong> arquivo(s)</span>
+            <span><strong>${totalAplicaveis}</strong> verificações</span>
+            <span><strong>${totalInconf}</strong> achados</span>
+          </div>
+        </div>
+
+        <div>
+          <span class="badge ${badgeCls}">${emoji} ${riscoConsolidado}</span>
+        </div>
+      </section>
+
+      <section aria-label="Resumo por bloco de verificação">
+        <h3 style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;
+                   color:var(--text-dim);font-weight:800;margin:0 0 .75rem;">
+          Resumo por Bloco de Verificação
+        </h3>
+        <div class="grid-blocos">
+          ${blocosHtml}
+        </div>
+      </section>
+
+      ${totalInconf > 0 ? `
+        <section class="ws-secao" style="margin-bottom:1.25rem;">
+          <header class="ws-secao__head">
+            <span class="ws-secao__title">Quadro Consolidado de Não Conformidades</span>
+            <span class="ws-secao__count">${totalInconf}</span>
+          </header>
+          ${renderAchadosConsolidados(arquivosOk)}
+        </section>
+      ` : ''}
+
+      <section class="ws-secao">
+        <header class="ws-secao__head">
+          <span class="ws-secao__title">Documentos do Processo</span>
+          <span class="ws-secao__count">${totalArquivos}</span>
+        </header>
+
+        ${totalArquivos === 0
+          ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;">
+               Nenhum arquivo adicionado. Use a área abaixo para enviar documentos.
+             </p>`
+          : `<div class="tabela-responsive-container">
+              <table class="tabela-arquivos">
+                <thead>
+                  <tr>
+                    <th class="col-arquivo">Arquivo</th>
+                    <th class="col-score">Conformidade</th>
+                    <th class="col-risco">Risco</th>
+                    <th class="col-acoes">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>${p.arquivos.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
+              </table>
+            </div>`
+        }
+
+        <div class="ws-dropzone" data-drop="${p.id}" tabindex="0" role="button">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none"
+               stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round"/>
+          </svg>
+          <p>Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
+          <p style="font-size:11.5px;color:var(--text-dim);">PDF · DOCX · DOC · TXT</p>
+        </div>
+      </section>
+
+      <div class="ws-actions" style="margin-top:1rem;">
+        <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
+          📄 Exportar Relatório do Processo Completo (PDF)
+        </button>
+        <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
+          💾 Salvar este Processo (JSON)
+        </button>
       </div>
-    </section>
-
-    <div class="ws-actions">
-      <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
-        📄 Exportar Relatório do Processo Completo (PDF)
-      </button>
-      <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
-        💾 Salvar este Processo (JSON)
-      </button>
     </div>
   `;
 
@@ -755,15 +931,25 @@ function renderWorkspace() {
 }
 
 function renderLinhaArquivo(procId, arq) {
-  const score = arq.status === 'ok' && typeof arq.score === 'number' ? `${arq.score.toFixed(1)}%` : (arq.status === 'erro' ? 'Erro' : '…');
+  const score = arq.status === 'ok' && typeof arq.score === 'number'
+    ? `${arq.score.toFixed(1)}%`
+    : (arq.status === 'erro' ? 'Erro' : '…');
   const risco = arq.risco || '—';
-  const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
-  const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
-  const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+  const badgeCls = risco === 'ALTO'  ? 'badge--alto'
+                 : risco === 'MÉDIO' ? 'badge--medio'
+                 : risco === 'BAIXO' ? 'badge--baixo'
+                 : 'badge--neutro';
+  const emoji = risco === 'ALTO'  ? '🔴'
+              : risco === 'MÉDIO' ? '🟡'
+              : risco === 'BAIXO' ? '🟢' : '⚪';
+  const corScore = risco === 'ALTO'  ? 'var(--danger)'
+                 : risco === 'MÉDIO' ? 'var(--warn)'
+                 : risco === 'BAIXO' ? 'var(--ok)'
+                 : 'var(--text-dim)';
 
   return `
     <tr>
-      <td>
+      <td data-label="Arquivo">
         <div class="arquivo-nome">
           <span class="arquivo-ext">${escapeHtml(arq.ext || 'ARQ')}</span>
           <span class="arquivo-nome__txt">
@@ -772,9 +958,13 @@ function renderLinhaArquivo(procId, arq) {
           </span>
         </div>
       </td>
-      <td class="col-score"><span class="arquivo-score" style="color:${corScore};">${score}</span></td>
-      <td class="col-risco"><span class="badge ${badgeCls}">${emoji} ${risco}</span></td>
-      <td>
+      <td class="col-score" data-label="Conformidade">
+        <span class="arquivo-score" style="color:${corScore};">${score}</span>
+      </td>
+      <td class="col-risco" data-label="Risco">
+        <span class="badge ${badgeCls}">${emoji} ${risco}</span>
+      </td>
+      <td data-label="Ações">
         <div class="arquivo-acoes">
           <button class="btn-icon" data-view-arq="${arq.id}" data-proc="${procId}" title="Ver detalhes" ${arq.status !== 'ok' ? 'disabled' : ''}>👁️</button>
           <button class="btn-icon" data-pdf-arq="${arq.id}" data-proc="${procId}" title="PDF individual" ${arq.status !== 'ok' ? 'disabled' : ''}>📄</button>
@@ -965,17 +1155,8 @@ function fecharModal() {
 }
 
 /* ==========================================================================
- * 14. PDF INSTITUCIONAL — pdfMake (v6.3 — ESTRUTURA EDITORIAL)
- * --------------------------------------------------------------------------
- * Blocos do relatório:
- *   A) Header/Footer fixos
- *   B) Cabeçalho + Metadados
- *   C) Quadro Resumo (Score / Risco / Inconformidades)
- *   D) Resumo por Bloco
- *   E) Quadro Detalhado de Não Conformidades
- *   F) Parecer + Assinatura
+ * 14. PDF INSTITUCIONAL — pdfMake
  * ======================================================================== */
-
 const PDF_PALETTE = {
   primaria:       '#1e3a8a',
   secundaria:     '#3b82f6',
@@ -1005,11 +1186,6 @@ function _severidadeCor(sev) {
   return { bg: '#e0f2fe', fg: '#075985', label: 'BAIXO' };
 }
 
-/**
- * Gera a definição completa do PDF institucional.
- * @param {Object} rep - Relatório (arquivo OU processo consolidado)
- * @param {Object} opts - { tipo: 'arquivo' | 'processo', nome: string }
- */
 function gerarDefinicaoPDF(rep, opts = {}) {
   const tipo = opts.tipo || 'arquivo';
   const nome = opts.nome || 'Documento';
@@ -1018,126 +1194,64 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   const risco = rep.risco || 'BAIXO';
   const score = rep.score || 0;
   const corRisco = _riscoCor(risco);
-  const corScore = risco === 'ALTO' ? PDF_PALETTE.dangerFg
-                 : risco === 'MÉDIO' ? PDF_PALETTE.warnFg
-                 : PDF_PALETTE.okFg;
 
   const dataGeracao = new Date();
   const dataFmt = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
   const numeroRelatorio = String(Math.floor(Math.random() * 900) + 100) + '/' + dataGeracao.getFullYear();
 
-  /* ---------- A) Header / Footer ---------- */
-  const header = (currentPage) => ({
+  const header = () => ({
     margin: [40, 22, 40, 0],
     columns: [
-      {
-        text: 'LICITAAUDIT · RELATÓRIO DE AUDITORIA E CONFORMIDADE LICITATÓRIA',
-        fontSize: 7.5,
-        color: PDF_PALETTE.textoDim,
-        characterSpacing: 0.4,
-      },
-      {
-        text: `${numeroRelatorio}`,
-        fontSize: 7.5,
-        color: PDF_PALETTE.textoDim,
-        alignment: 'right',
-      },
+      { text: 'LICITAAUDIT · RELATÓRIO DE AUDITORIA E CONFORMIDADE LICITATÓRIA', fontSize: 7.5, color: PDF_PALETTE.textoDim, characterSpacing: 0.4 },
+      { text: `${numeroRelatorio}`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right' },
     ],
   });
 
   const footer = (currentPage, pageCount) => ({
     margin: [40, 12, 40, 0],
     columns: [
-      {
-        text: 'Documento gerado automaticamente pelo LicitaAudit nos termos da Lei nº 14.133/2021',
-        fontSize: 7,
-        color: PDF_PALETTE.textoDim,
-        italics: true,
-      },
-      {
-        text: `Página ${currentPage} de ${pageCount}`,
-        fontSize: 7.5,
-        color: PDF_PALETTE.textoDim,
-        alignment: 'right',
-      },
+      { text: 'Documento gerado automaticamente pelo LicitaAudit nos termos da Lei nº 14.133/2021', fontSize: 7, color: PDF_PALETTE.textoDim, italics: true },
+      { text: `Página ${currentPage} de ${pageCount}`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right' },
     ],
   });
 
-  /* ---------- B) Cabeçalho + Metadados ---------- */
   const tituloBloco = {
-    table: {
-      widths: ['*'],
-      body: [[
-        {
-          text: tipo === 'processo'
-            ? 'RELATÓRIO CONSOLIDADO DE PROCESSO'
-            : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE',
-          fillColor: PDF_PALETTE.primaria,
-          color: PDF_PALETTE.headerTexto,
-          fontSize: 13,
-          bold: true,
-          alignment: 'center',
-          margin: [0, 10, 0, 10],
-        },
-      ]],
-    },
+    table: { widths: ['*'], body: [[{
+      text: tipo === 'processo' ? 'RELATÓRIO CONSOLIDADO DE PROCESSO' : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE',
+      fillColor: PDF_PALETTE.primaria, color: PDF_PALETTE.headerTexto,
+      fontSize: 13, bold: true, alignment: 'center', margin: [0, 10, 0, 10],
+    }]] },
     layout: 'noBorders',
     margin: [0, 0, 0, 4],
   };
 
   const subtituloBloco = {
-    text: nome,
-    fontSize: 9,
-    color: PDF_PALETTE.textoMuted,
-    alignment: 'center',
-    italics: true,
-    margin: [0, 0, 0, 18],
+    text: nome, fontSize: 9, color: PDF_PALETTE.textoMuted,
+    alignment: 'center', italics: true, margin: [0, 0, 0, 18],
   };
 
   const metadados = {
     table: {
       widths: ['30%', '70%'],
       body: [
-        [
-          { text: tipo === 'processo' ? 'Processo / Workspace:' : 'Arquivo:', style: 'metaKey' },
-          { text: nome, style: 'metaValue' },
-        ],
-        [
-          { text: 'Órgão / Entidade:', style: 'metaKey' },
-          { text: id.orgao || 'Não informado', style: 'metaValue' },
-        ],
-        [
-          { text: 'Processo Administrativo:', style: 'metaKey' },
-          { text: id.processo || 'Não identificado', style: 'metaValue' },
-        ],
-        [
-          { text: 'Modalidade Declarada:', style: 'metaKey' },
-          { text: id.modalidade || 'Não identificada', style: 'metaValue' },
-        ],
-        [
-          { text: 'Objeto:', style: 'metaKey' },
-          { text: id.objeto || 'Não identificado', style: 'metaValue' },
-        ],
-        [
-          { text: 'Data da Análise:', style: 'metaKey' },
-          { text: dataFmt, style: 'metaValue' },
-        ],
+        [{ text: tipo === 'processo' ? 'Processo / Workspace:' : 'Arquivo:', style: 'metaKey' }, { text: nome, style: 'metaValue' }],
+        [{ text: 'Órgão / Entidade:', style: 'metaKey' }, { text: id.orgao || 'Não informado', style: 'metaValue' }],
+        [{ text: 'Processo Administrativo:', style: 'metaKey' }, { text: id.processo || 'Não identificado', style: 'metaValue' }],
+        [{ text: 'Modalidade Declarada:', style: 'metaKey' }, { text: id.modalidade || 'Não identificada', style: 'metaValue' }],
+        [{ text: 'Objeto:', style: 'metaKey' }, { text: id.objeto || 'Não identificado', style: 'metaValue' }],
+        [{ text: 'Data da Análise:', style: 'metaKey' }, { text: dataFmt, style: 'metaValue' }],
       ],
     },
     layout: {
       hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 1 : 0.5,
       vLineWidth: () => 0,
       hLineColor: () => PDF_PALETTE.borda,
-      paddingTop: () => 7,
-      paddingBottom: () => 7,
-      paddingLeft: () => 10,
-      paddingRight: () => 10,
+      paddingTop: () => 7, paddingBottom: () => 7, paddingLeft: () => 10, paddingRight: () => 10,
       fillColor: (rowIndex) => rowIndex % 2 === 0 ? PDF_PALETTE.zebra : '#ffffff',
     },
     margin: [0, 0, 0, 20],
   };
 
-  /* ---------- C) Quadro Resumo (Dashboard) ---------- */
   const totalInconf = st.falha || 0;
   const totalCriticas = st.criticas || 0;
   const totalMedias = st.medias || 0;
@@ -1147,58 +1261,28 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     table: {
       widths: ['*', '*', '*'],
       body: [[
-        {
-          stack: [
-            { text: 'GRAU DE CONFORMIDADE', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
-            { text: `${score}%`, fontSize: 22, bold: true, color: PDF_PALETTE.primaria, alignment: 'center', margin: [0, 4, 0, 0] },
-          ],
-          fillColor: PDF_PALETTE.zebra,
-          margin: [8, 12, 8, 12],
-        },
-        {
-          stack: [
-            { text: 'CLASSIFICAÇÃO DE RISCO', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
-            {
-              table: {
-                widths: ['*'],
-                body: [[{
-                  text: risco,
-                  fontSize: 12,
-                  bold: true,
-                  color: corRisco.fg,
-                  fillColor: corRisco.bg,
-                  alignment: 'center',
-                  margin: [0, 5, 0, 5],
-                }]],
-              },
-              layout: 'noBorders',
-              margin: [0, 6, 0, 0],
-            },
-          ],
-          fillColor: PDF_PALETTE.zebra,
-          margin: [8, 12, 8, 12],
-        },
-        {
-          stack: [
-            { text: 'INCONFORMIDADES', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
-            { text: String(totalInconf), fontSize: 22, bold: true, color: totalInconf > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.okFg, alignment: 'center', margin: [0, 4, 0, 0] },
-            { text: `${totalCriticas} crítica(s) · ${totalMedias} média(s) · ${totalBaixas} baixa(s)`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'center', margin: [0, 2, 0, 0] },
-          ],
-          fillColor: PDF_PALETTE.zebra,
-          margin: [8, 12, 8, 12],
-        },
+        { stack: [
+          { text: 'GRAU DE CONFORMIDADE', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
+          { text: `${score}%`, fontSize: 22, bold: true, color: PDF_PALETTE.primaria, alignment: 'center', margin: [0, 4, 0, 0] },
+        ], fillColor: PDF_PALETTE.zebra, margin: [8, 12, 8, 12] },
+        { stack: [
+          { text: 'CLASSIFICAÇÃO DE RISCO', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
+          { table: { widths: ['*'], body: [[{ text: risco, fontSize: 12, bold: true, color: corRisco.fg, fillColor: corRisco.bg, alignment: 'center', margin: [0, 5, 0, 5] }]] }, layout: 'noBorders', margin: [0, 6, 0, 0] },
+        ], fillColor: PDF_PALETTE.zebra, margin: [8, 12, 8, 12] },
+        { stack: [
+          { text: 'INCONFORMIDADES', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
+          { text: String(totalInconf), fontSize: 22, bold: true, color: totalInconf > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.okFg, alignment: 'center', margin: [0, 4, 0, 0] },
+          { text: `${totalCriticas} crítica(s) · ${totalMedias} média(s) · ${totalBaixas} baixa(s)`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'center', margin: [0, 2, 0, 0] },
+        ], fillColor: PDF_PALETTE.zebra, margin: [8, 12, 8, 12] },
       ]],
     },
     layout: {
-      hLineWidth: () => 0.5,
-      vLineWidth: () => 0.5,
-      hLineColor: () => PDF_PALETTE.borda,
-      vLineColor: () => PDF_PALETTE.borda,
+      hLineWidth: () => 0.5, vLineWidth: () => 0.5,
+      hLineColor: () => PDF_PALETTE.borda, vLineColor: () => PDF_PALETTE.borda,
     },
     margin: [0, 0, 0, 24],
   };
 
-  /* ---------- D) Resumo por Bloco ---------- */
   const blocos = st.porBloco || {};
   const linhasBlocos = [1, 2, 3, 4, 5, 6].map(b => {
     const x = blocos[b] || { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0, criticas: 0 };
@@ -1231,20 +1315,14 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       ],
     },
     layout: {
-      hLineWidth: () => 0.4,
-      vLineWidth: () => 0.4,
-      hLineColor: () => PDF_PALETTE.borda,
-      vLineColor: () => PDF_PALETTE.borda,
+      hLineWidth: () => 0.4, vLineWidth: () => 0.4,
+      hLineColor: () => PDF_PALETTE.borda, vLineColor: () => PDF_PALETTE.borda,
       fillColor: (i) => i === 0 ? PDF_PALETTE.primaria : (i % 2 === 0 ? PDF_PALETTE.zebra : null),
-      paddingTop: () => 5,
-      paddingBottom: () => 5,
-      paddingLeft: () => 6,
-      paddingRight: () => 6,
+      paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 6, paddingRight: () => 6,
     },
     margin: [0, 0, 0, 22],
   };
 
-  /* ---------- E) Quadro Detalhado de Não Conformidades ---------- */
   const falhas = (rep.resultados || []).filter(r => r.aplicavel && !r.conforme);
 
   const falhasBody = falhas.length === 0
@@ -1255,29 +1333,22 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     : falhas.map(r => {
         const sc = _severidadeCor(r.severidade);
         return [
-          {
-            stack: [
-              { text: sc.label, fontSize: 7.5, bold: true, color: sc.fg, alignment: 'center' },
-              { text: `[${r.id}]`, fontSize: 7, color: PDF_PALETTE.textoDim, alignment: 'center', margin: [0, 2, 0, 0] },
-            ],
-            fillColor: sc.bg,
-            margin: [2, 4, 2, 4],
-          },
-          {
-            stack: [
-              { text: r.nome, fontSize: 9, bold: true, color: PDF_PALETTE.texto },
-              { text: r.mensagemFalha, fontSize: 8, color: PDF_PALETTE.textoMuted, margin: [0, 3, 0, 3] },
-              { text: `→ ${r.recomendacao}`, fontSize: 7.5, color: '#0f766e', italics: true },
-            ],
-          },
+          { stack: [
+            { text: sc.label, fontSize: 7.5, bold: true, color: sc.fg, alignment: 'center' },
+            { text: `[${r.id}]`, fontSize: 7, color: PDF_PALETTE.textoDim, alignment: 'center', margin: [0, 2, 0, 0] },
+          ], fillColor: sc.bg, margin: [2, 4, 2, 4] },
+          { stack: [
+            { text: r.nome, fontSize: 9, bold: true, color: PDF_PALETTE.texto },
+            { text: r.mensagemFalha, fontSize: 8, color: PDF_PALETTE.textoMuted, margin: [0, 3, 0, 3] },
+            { text: `→ ${r.recomendacao}`, fontSize: 7.5, color: '#0f766e', italics: true },
+          ] },
           { text: r.fundamento, fontSize: 7.5, color: PDF_PALETTE.secundaria, italics: true },
         ];
       });
 
   const detalhado = {
     table: {
-      headerRows: 1,
-      dontBreakRows: true,
+      headerRows: 1, dontBreakRows: true,
       widths: ['12%', '60%', '28%'],
       body: [
         [
@@ -1289,20 +1360,14 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       ],
     },
     layout: {
-      hLineWidth: () => 0.4,
-      vLineWidth: () => 0.4,
-      hLineColor: () => PDF_PALETTE.borda,
-      vLineColor: () => PDF_PALETTE.borda,
+      hLineWidth: () => 0.4, vLineWidth: () => 0.4,
+      hLineColor: () => PDF_PALETTE.borda, vLineColor: () => PDF_PALETTE.borda,
       fillColor: (i) => i === 0 ? PDF_PALETTE.primaria : null,
-      paddingTop: () => 6,
-      paddingBottom: () => 6,
-      paddingLeft: () => 7,
-      paddingRight: () => 7,
+      paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 7, paddingRight: () => 7,
     },
     margin: [0, 0, 0, 22],
   };
 
-  /* ---------- F) Parecer + Assinatura ---------- */
   const parecerTexto = risco === 'ALTO'
     ? 'PUBLICAÇÃO DESACONSELHADA — Foram identificados vícios de severidade CRÍTICA/impeditiva que comprometem a legalidade do procedimento. Recomenda-se a devolução imediata dos autos à unidade requisitante para saneamento integral antes de qualquer publicação.'
     : risco === 'MÉDIO'
@@ -1314,108 +1379,60 @@ function gerarDefinicaoPDF(rep, opts = {}) {
                      : PDF_PALETTE.okBg;
 
   const parecer = {
-    table: {
-      widths: ['*'],
-      body: [[{
-        stack: [
-          { text: 'PARECER TÉCNICO DA AUDITORIA', fontSize: 8, bold: true, color: PDF_PALETTE.textoMuted, characterSpacing: 0.6 },
-          { text: parecerTexto, fontSize: 9.5, color: PDF_PALETTE.texto, margin: [0, 5, 0, 0], alignment: 'justify', lineHeight: 1.4 },
-        ],
-        fillColor: corParecerBg,
-        margin: [14, 12, 14, 12],
-      }]],
-    },
+    table: { widths: ['*'], body: [[{
+      stack: [
+        { text: 'PARECER TÉCNICO DA AUDITORIA', fontSize: 8, bold: true, color: PDF_PALETTE.textoMuted, characterSpacing: 0.6 },
+        { text: parecerTexto, fontSize: 9.5, color: PDF_PALETTE.texto, margin: [0, 5, 0, 0], alignment: 'justify', lineHeight: 1.4 },
+      ], fillColor: corParecerBg, margin: [14, 12, 14, 12],
+    }]] },
     layout: 'noBorders',
     margin: [0, 0, 0, 26],
   };
 
   const assinatura = {
     table: {
-      dontBreakRows: true,
-      widths: ['*'],
+      dontBreakRows: true, widths: ['*'],
       body: [[{
         stack: [
           { text: ' ', margin: [0, 24, 0, 0] },
-          {
-            canvas: [{
-              type: 'line', x1: 130, y1: 0, x2: 385, y2: 0,
-              lineWidth: 0.8, lineColor: '#334155',
-            }],
-          },
+          { canvas: [{ type: 'line', x1: 130, y1: 0, x2: 385, y2: 0, lineWidth: 0.8, lineColor: '#334155' }] },
           { text: 'Equipe de Auditoria de Controle Interno', fontSize: 10, bold: true, alignment: 'center', margin: [0, 6, 0, 2], color: PDF_PALETTE.texto },
           { text: 'Agente de Auditoria · LicitaAudit — Análise Automatizada', fontSize: 8.5, alignment: 'center', color: PDF_PALETTE.textoMuted },
           { text: (id.orgao || '').toUpperCase(), fontSize: 8, alignment: 'center', color: PDF_PALETTE.textoDim, italics: true, margin: [0, 2, 0, 0] },
           { text: `${dataFmt} · ${numeroRelatorio}`, fontSize: 7.5, alignment: 'center', color: PDF_PALETTE.textoDim, margin: [0, 6, 0, 0] },
-        ],
-        margin: [0, 8, 0, 10],
+        ], margin: [0, 8, 0, 10],
       }]],
     },
     layout: 'noBorders',
   };
 
-  /* ---------- Montagem final ---------- */
   return {
     pageSize: 'A4',
     pageMargins: [40, 60, 40, 50],
-
-    header,
-    footer,
-
-    defaultStyle: {
-      font: 'Roboto',
-      fontSize: 9,
-      color: PDF_PALETTE.texto,
-      lineHeight: 1.35,
-    },
-
+    header, footer,
+    defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.35 },
     content: [
-      tituloBloco,
-      subtituloBloco,
-      metadados,
-      dashboard,
+      tituloBloco, subtituloBloco, metadados, dashboard,
       { text: 'RESUMO POR BLOCO DE VERIFICAÇÃO', style: 'secaoTitulo' },
       resumoBlocos,
       { text: 'QUADRO DETALHADO DE NÃO CONFORMIDADES', style: 'secaoTitulo' },
-      detalhado,
-      parecer,
-      assinatura,
+      detalhado, parecer, assinatura,
     ],
-
     styles: {
       secaoTitulo: {
-        fontSize: 10.5,
-        bold: true,
-        color: PDF_PALETTE.primaria,
-        margin: [0, 8, 0, 8],
-        characterSpacing: 0.3,
-        keepWithNext: true,
+        fontSize: 10.5, bold: true, color: PDF_PALETTE.primaria,
+        margin: [0, 8, 0, 8], characterSpacing: 0.3, keepWithNext: true,
       },
       tableHeader: {
-        bold: true,
-        fontSize: 8,
-        color: PDF_PALETTE.headerTexto,
-        fillColor: PDF_PALETTE.primaria,
-        alignment: 'left',
-        margin: [0, 3, 0, 3],
+        bold: true, fontSize: 8, color: PDF_PALETTE.headerTexto,
+        fillColor: PDF_PALETTE.primaria, alignment: 'left', margin: [0, 3, 0, 3],
       },
-      metaKey: {
-        fontSize: 8.5,
-        bold: true,
-        color: PDF_PALETTE.textoMuted,
-      },
-      metaValue: {
-        fontSize: 9,
-        color: PDF_PALETTE.texto,
-      },
+      metaKey:   { fontSize: 8.5, bold: true, color: PDF_PALETTE.textoMuted },
+      metaValue: { fontSize: 9, color: PDF_PALETTE.texto },
     },
   };
 }
 
-/* --------------------------------------------------------------------------
- * Wrappers públicos
- * ------------------------------------------------------------------------ */
-
-/** PDF individual do arquivo. */
 function exportarRelatorioAuditPDF(arq) {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   if (!arq || arq.status !== 'ok') { toast('Arquivo não disponível para exportação.', 'error'); return; }
@@ -1430,7 +1447,6 @@ function exportarRelatorioAuditPDF(arq) {
   }
 }
 
-/** PDF consolidado do processo (agrega todos os arquivos). */
 function exportarRelatorioProcessoConsolidadoPDF(processo) {
   const arquivosOk = (processo?.arquivos || []).filter(a => a.status === 'ok');
   if (!arquivosOk.length) { toast('Nenhum arquivo analisado no processo.', 'error'); return; }
@@ -1454,7 +1470,6 @@ function exportarRelatorioProcessoConsolidadoPDF(processo) {
   }
 }
 
-/** PDF em lote — um único documento com todos os processos. */
 function exportarPDFTodos() {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   const processosComArquivo = state.processos.filter(p => p.arquivos.some(a => a.status === 'ok'));
@@ -1478,7 +1493,7 @@ function exportarPDFTodos() {
     pageSize: 'A4',
     pageMargins: [40, 60, 40, 50],
     defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.35 },
-    header: (p) => ({
+    header: () => ({
       margin: [40, 22, 40, 0],
       text: 'LICITAAUDIT · LOTE DE RELATÓRIOS DE AUDITORIA',
       fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right',
@@ -1509,7 +1524,7 @@ function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '6.3.0',
+    versao: '6.4.0',
     exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags,
@@ -1635,7 +1650,21 @@ Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sa
 }
 
 /* ==========================================================================
- * 18. EVENTOS E BOOTSTRAP
+ * 18. MENU MOBILE (HAMBÚRGUER)
+ * ======================================================================== */
+function abrirSidebar() {
+  els.sidebar?.classList.add('is-open');
+  els.sidebarOverlay?.classList.add('is-open');
+  els.sidebarToggle?.setAttribute('aria-expanded', 'true');
+}
+function fecharSidebar() {
+  els.sidebar?.classList.remove('is-open');
+  els.sidebarOverlay?.classList.remove('is-open');
+  els.sidebarToggle?.setAttribute('aria-expanded', 'false');
+}
+
+/* ==========================================================================
+ * 19. EVENTOS E BOOTSTRAP
  * ======================================================================== */
 function bindEventosGlobais() {
   els.btnNovoProcesso?.addEventListener('click', () => criarProcesso());
@@ -1653,6 +1682,20 @@ function bindEventosGlobais() {
   $$('[data-close-modal]').forEach(el => el.addEventListener('click', fecharModal));
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !els.modal.classList.contains('is-hidden')) fecharModal();
+    if (e.key === 'Escape') fecharSidebar();
+  });
+
+  // Menu mobile
+  els.sidebarToggle?.addEventListener('click', () => {
+    els.sidebar.classList.contains('is-open') ? fecharSidebar() : abrirSidebar();
+  });
+  els.sidebarOverlay?.addEventListener('click', fecharSidebar);
+
+  els.sidebar?.addEventListener('click', e => {
+    if (window.matchMedia('(max-width: 767px)').matches &&
+        e.target.closest('button, .btn')) {
+      fecharSidebar();
+    }
   });
 
   ['paramObjeto', 'paramModalidade', 'paramCriterio'].forEach(id => {
@@ -1689,7 +1732,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v6.3 · Relatórios PDF institucionais (5 blocos editoriais)'
+    '· v6.4 · Painel de Auditoria Responsivo'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
