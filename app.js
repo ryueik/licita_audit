@@ -1,9 +1,8 @@
 /* ============================================================================
- * LicitaAudit · app.js — v6.6
+ * LicitaAudit · app.js — v6.7
  * ----------------------------------------------------------------------------
- * • Parser radical-based de processo/objeto (abrangente e tolerante)
- * • Motor de regras com aplicabilidade condicional (B2_05, B3_01, B3_03, B3_04)
- * • Relatório PDF corporativo (pdfMake) — design editorial executivo
+ * • Motor abrangente + relatório PDF editorial executivo (v6.6)
+ * • NOVO: Importação múltipla de JSON com merge inteligente
  * ========================================================================== */
 'use strict';
 
@@ -84,7 +83,7 @@ function toast(msg, kind = 'ok') {
   toast._t = setTimeout(() => {
     els.toast.classList.remove('is-visible');
     setTimeout(() => els.toast.classList.add('is-hidden'), 250);
-  }, 2800);
+  }, 4200);
 }
 function showLoader(t) { els.loaderText.textContent = t || 'Processando…'; els.loader.classList.remove('is-hidden'); }
 function hideLoader() { els.loader.classList.add('is-hidden'); }
@@ -139,7 +138,6 @@ function extrairModalidade(corpus) {
   if (KB.sinaisModalidade.leilao.test(corpus))          return { chave:'leilao',          rotulo:'Leilão Eletrônico' };
   return { chave: null, rotulo: 'Não identificada' };
 }
-
 function classificarObjeto(texto) {
   if (!texto) return 'Não identificado';
   if (KB.alienacao.test(texto))      return 'Alienação de bens';
@@ -150,7 +148,6 @@ function classificarObjeto(texto) {
   if (KB.comuns.test(texto))         return 'Bens e serviços comuns';
   return 'Serviços em geral';
 }
-
 function extrairObjeto(corpus) {
   const LABEL = '(?:identifica[cç][aã]o\\s+do\\s+objeto|objeto\\s+do\\s+processo|objeto\\s+da\\s+contrata[cç][aã]o|objeto\\s+predominante|natureza\\s+do\\s+objeto|do\\s+objeto|objeto)';
   const NUM   = '(?:\\d+[\\.\\)]\\s*|[IVX]+\\.\\s*)?';
@@ -162,10 +159,7 @@ function extrairObjeto(corpus) {
   const texto = (m[1] || m[2] || '').replace(/^[\s\-–—:.,;]+/, '').replace(/\s+/g, ' ').trim().slice(0, 600);
   return { texto, tipo: classificarObjeto(texto) };
 }
-
-/* ---------- NOVO: parser radical-based de processo ---------- */
 function extrairProcesso(corpus) {
-  // 1) Tentativa radical abrangente — aceita "processo", "PA", "PRT", "protocolo", "unitau" etc.
   const rx = /(processo|pa|prt|protocolo|unitau|edital|memorando|of[íi]cio)[\s\wºnº\.:\/-]*?(\d{3,}[\d\/\.\-]+)/i;
   const m = corpus.match(rx);
   if (m && m[2]) {
@@ -174,24 +168,18 @@ function extrairProcesso(corpus) {
     const formatado = `${rotulo.charAt(0).toUpperCase() + rotulo.slice(1).toLowerCase()} ${numero}`;
     return formatado.replace(/\s+/g, ' ').slice(0, 80);
   }
-
-  // 2) Fallback: qualquer sequência longa de números com barra/pontos
   const fb = corpus.match(/\b(\d{2,}[\.\/]\d{2,}[\.\/\-\d]*)\b/);
   if (fb) return fb[1];
-
   return 'Não identificado';
 }
-
 function extrairValor(corpus) {
   const m = corpus.match(/R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i);
   return m ? parseValorBR(m[1]) : 0;
 }
-
 function extrairOrgao(corpus) {
   const m = corpus.match(/\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Secretaria|Funda[cç][aã]o|Autarquia|Departamento|Coordenadoria)[^\n,.;]{0,80}/i);
   return m ? m[0].replace(/\s+/g, ' ').trim() : 'ÓRGÃO / ENTIDADE PÚBLICA';
 }
-
 function extrairCriterio(corpus) {
   const m = {
     'menor-preco':    /\bmenor\s+pre[cç]o\b/i,
@@ -204,7 +192,6 @@ function extrairCriterio(corpus) {
   for (const [k, rx] of Object.entries(m)) if (rx.test(corpus)) return k;
   return 'indefinido';
 }
-
 function classificarNatureza(corpus, forcar = 'auto') {
   if (forcar && forcar !== 'auto') {
     const mapa = {
@@ -224,7 +211,6 @@ function classificarNatureza(corpus, forcar = 'auto') {
   if (KB.comuns.test(t))         return 'Bens e serviços comuns';
   return 'Bens e serviços comuns';
 }
-
 function classificarTipoObjeto(meta) {
   const texto = [meta?.objeto?.texto || '', meta?.objetoField || ''].join(' ').toLowerCase();
   const nat   = (meta?.natureza || '').toLowerCase();
@@ -236,16 +222,9 @@ function classificarTipoObjeto(meta) {
   if (/servic/.test(nat))       return 'servicos';
   return 'servicos';
 }
-
-/* ---------- Detecção de objeto de engenharia (para B2_05) ---------- */
 function ehObjetoEngenharia(meta, natureza, corpus) {
-  const blob = [
-    meta?.objeto?.texto || '',
-    meta?.objeto?.tipo || '',
-    natureza || '',
-  ].join(' ');
+  const blob = [meta?.objeto?.texto || '', meta?.objeto?.tipo || '', natureza || ''].join(' ');
   if (/(obra|engenharia|reforma|constru[cç][aã]o|pavimenta)/i.test(blob)) return true;
-  // fallback: varre o corpus por termos técnicos de engenharia
   return /(obra\s+p[uú]blica|servi[cç]os?\s+de\s+engenharia|reforma\s+predial|pavimenta[cç][aã]o\s+asf[aá]ltica|constru[cç][aã]o\s+civil)/i.test(corpus);
 }
 
@@ -272,7 +251,6 @@ const MATRIZ_CORE_30 = [
   { id:'B1_03', bloco:1, nome:'Estimativa de quantitativos', fundamento:'Art. 18, §1º, III', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(quantidade|qtd\.?|unidades?|\blotes?\b|\d+\s*\([^)]{2,60}\)|\d+\s*(unid|un|pç|pc|cx|kg|l|m²|m³|resma|itens?))/i.test(c.corpus), mensagemFalha:'Quantitativos não explicitados.', recomendacao:'Apresentar planilha quantitativa com metodologia.' },
   { id:'B1_04', bloco:1, nome:'ETP ou Termo de Referência', fundamento:'Art. 6º, XXIII e XXV · Art. 18, §1º', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(estudo\s+t[eé]cnico\s+preliminar|\bETP\b|termo\s+de\s+refer[eê]ncia|\bTR\b|projeto\s+b[aá]sico|\bPB\b|anteprojeto|especifica[cç][õo]es\s+deste\s+edital)/i.test(c.corpus), mensagemFalha:'Documento estruturante ausente.', recomendacao:'Anexar ETP e TR (ou Projeto Básico).' },
   { id:'B1_05', bloco:1, nome:'Decisão motivada sobre parcelamento', fundamento:'Art. 47', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(parcelament|divis[aã]o\s+em\s+lotes|indivis[íi]vel|lote\s+[uú]nico|n[aã]o\s+parcel)/i.test(c.corpus), mensagemFalha:'Sem decisão sobre parcelamento.', recomendacao:'Motivar o parcelamento ou a indivisibilidade.' },
-
   { id:'B2_01', bloco:2, nome:'Estimativa de valor e metodologia', fundamento:'Art. 23', severidade:'CRITICA', aplicavel:()=>true, test:c=>c.meta.valor > 0 || firstMatch(c.corpus, KB.orcamento), mensagemFalha:'Estimativa de valor ausente.', recomendacao:'Elaborar planilha orçamentária com múltiplas fontes.' },
   { id:'B2_02', bloco:2, nome:'Indicação da dotação orçamentária', fundamento:'Art. 18, §1º, V · Art. 150', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(dota[cç][aã]o\s+or[cç]ament|programa\s+de\s+trabalho|natureza\s+de\s+despesa|fonte\s+de\s+recurso)/i.test(c.corpus), mensagemFalha:'Dotação não indicada.', recomendacao:'Indicar dotação, programa e natureza de despesa.' },
   { id:'B2_03', bloco:2, nome:'Declaração de adequação orçamentária', fundamento:'Art. 150', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(\bLRF\b|responsabilidade\s+fiscal|\bLDO\b|adequa[cç][aã]o\s+or[cç]ament)/i.test(c.corpus), mensagemFalha:'Sem declaração de adequação.', recomendacao:'Declarar adequação orçamentária e financeira.' },
@@ -282,51 +260,39 @@ const MATRIZ_CORE_30 = [
       if (!c.meta.valor || c.meta.valor <= 0) return false;
       return c.meta.valor <= lim;
     }, mensagemFalha:'Valor acima do teto para dispensa.', recomendacao:'Reclassificar modalidade ou revisar valor.' },
-
-  /* ---------- B2_05 — APLICABILIDADE CONDICIONAL (engenharia apenas) ---------- */
   { id:'B2_05', bloco:2, nome:'Referência SINAPI/SICRO (obras)', fundamento:'Art. 23, §2º', severidade:'MEDIA',
     aplicavel: c => ehObjetoEngenharia(c.meta, c.natureza, c.corpus),
     test: c => /(SINAPI|SICRO|tabela\s+de\s+refer[eê]ncia|composi[cç][aã]o\s+de\s+custos|or[cç]amento\s+referencial)/i.test(c.corpus),
     mensagemFalha:'Sem referência SINAPI/SICRO.', recomendacao:'Comprovar compatibilidade com SINAPI/SICRO.' },
-
-  /* ---------- B3_01 — MARCA (radical-based, ampla) ---------- */
   { id:'B3_01', bloco:3, nome:'Ausência de direcionamento de marca', fundamento:'Art. 41, I', severidade:'CRITICA',
     aplicavel:()=>true,
     test:c=>{
       const vedacaoA = /(vedad[ao]|proibid[ao]|sem|aus[êe]ncia)\s+.{0,80}?\b(marca|modelo|fabricante)\b/i.test(c.corpus);
       const vedacaoB = /(marca\s+exclusiva|indica[cç][aã]o\s+de\s+marca).{0,80}?\b(vedad[ao]|proibid[ao])/i.test(c.corpus);
       if (vedacaoA || vedacaoB) return true;
-      // se cita marca específica, exige justificativa técnica de padronização
       const temMarcaEspecifica = /\b(marca|modelo|fabricante)\s*[:\-]\s*[A-ZÀ-Ú][\w-]{1,30}/i.test(c.corpus);
       if (!temMarcaEspecifica) return true;
       return /(padroniza|carta\s+de\s+exclusividade|atestado\s+de\s+exclusividade|justificativa\s+t[eé]cnica\s+de\s+padroniza|art\.?\s*41\s*,?\s*i\b)/i.test(c.corpus);
     },
     mensagemFalha:'Indicação de marca sem justificativa.',
     recomendacao:'Inserir cláusula de vedação OU justificativa de padronização (Art. 41, I).' },
-
   { id:'B3_02', bloco:3, nome:'Vedação de participação de servidores', fundamento:'Art. 14, I', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(servidores?\s+do\s+[óo]rg[ãa]o|membros?\s+da\s+comiss[aã]o|art\.?\s*14,?\s*i\b|v[eé]dad[ao]\s+ao\s+servidor|impedimento\s+de\s+servidor|agente\s+p[uú]blico)/i.test(c.corpus), mensagemFalha:'Sem cláusula de vedação a servidores.', recomendacao:'Incluir cláusula vedando participação de servidores (Art. 14, I).' },
-
-  /* ---------- B3_03 — CEIS/CNEP (radical-based) ---------- */
   { id:'B3_03', bloco:3, nome:'Vedação a empresas suspensas', fundamento:'Art. 14, III', severidade:'MEDIA',
     aplicavel:()=>true,
     test:c=>/(\bceis\b|\bcnep\b|suspen[sa][oa]?|impedid[ao]|sancionad[ao]|inid[ôo]ne[ao]|art\.?\s*14)/i.test(c.corpus),
     mensagemFalha:'Sem vedação a empresas impedidas.',
     recomendacao:'Explicitar vedação e consulta CEIS/CNEP (Art. 14, III).' },
-
-  /* ---------- B3_04 — TRABALHO INFANTIL (radical-based) ---------- */
   { id:'B3_04', bloco:3, nome:'Declaração sobre trabalho infantil', fundamento:'Art. 68, VI', severidade:'MEDIA',
     aplicavel:()=>true,
     test:c=>/(infantil|menor(?:es)?\s+de\s+18|trabalho\s+noturno|perigoso|insalubre|art\.?\s*68|n[aã]o\s+emprego\s+de\s+menores)/i.test(c.corpus),
     mensagemFalha:'Sem declaração sobre trabalho infantil.',
     recomendacao:'Exigir declaração de não emprego de menores (Art. 68, VI).' },
-
   { id:'B3_05', bloco:3, nome:'Qualificação técnica e vistoria', fundamento:'Art. 67 · Art. 63, § único', severidade:'MEDIA', aplicavel:()=>true, test:c=>{
       if (/(exig[êe]ncia\s+excessiva|desproporcional|afunilad[ao])/i.test(c.corpus)) return false;
       const v = /(vistoria|visita\s+t[eé]cnica)/i.test(c.corpus);
       if (!v) return true;
       return /(declara[cç][aã]o\s+formal|substitui[cç][aã]o\s+d[aa]\s+vistoria|dispensa\s+de\s+vistoria|art\.?\s*63,?\s*§\s*[uú]nico|em\s+substitui[cç][aã]o\s+[àa]\s+vistoria)/i.test(c.corpus);
     }, mensagemFalha:'Exigência excessiva OU vistoria sem alternativa.', recomendacao:'Permitir declaração em substituição à vistoria.' },
-
   { id:'B4_01', bloco:4, nome:'Coerência modalidade × natureza', fundamento:'Art. 6º, XLI · Art. 28 a 32', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
       const nat = (c.natureza || '').toLowerCase();
@@ -340,13 +306,11 @@ const MATRIZ_CORE_30 = [
   { id:'B4_03', bloco:4, nome:'Inexigibilidade: justificativa de preço', fundamento:'Art. 74, §2º', severidade:'MEDIA', aplicavel:c=>/inexigibilidade/i.test(c.modalidade?.modalidade || ''), test:c=>/(notas?\s+fiscais?|contratos?\s+anterior|pre[cç]os?\s+praticad)/i.test(c.corpus), mensagemFalha:'Sem justificativa de preço.', recomendacao:'Juntar notas fiscais ou contratos anteriores.' },
   { id:'B4_04', bloco:4, nome:'Dispensa Emergencial: caracterização', fundamento:'Art. 75, VIII e §1º', severidade:'CRITICA', aplicavel:c=>/dispensa/i.test(c.modalidade?.modalidade || '') && KB.emergencia.test(c.corpus), test:c=>/(risco\s+iminente|paralisa[cç][aã]o|desabastecimento)/i.test(c.corpus) && /(1\s+ano|12\s+meses|sem\s+prorroga)/i.test(c.corpus), mensagemFalha:'Emergência não caracterizada OU prazo > 1 ano.', recomendacao:'Caracterizar risco iminente e prazo ≤ 1 ano.' },
   { id:'B4_05', bloco:4, nome:'Critério de julgamento declarado', fundamento:'Art. 33', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(menor\s+pre[cç]o|maior\s+desconto|melhor\s+t[eé]cnica|t[eé]cnica\s+e\s+pre[cç]o|maior\s+lance|maior\s+retorno)/i.test(c.corpus) || c.criterio !== 'indefinido', mensagemFalha:'Critério não declarado.', recomendacao:'Declarar critério entre os do Art. 33.' },
-
   { id:'B5_01', bloco:5, nome:'Prazo mínimo de 8 dias úteis (bens)', fundamento:'Art. 55, I, "a"', severidade:'CRITICA', aplicavel:c=>/preg[aã]o/i.test(c.modalidade?.modalidade || '') && c.meta?.tipoObjeto === 'bens', test:c=>/(8\s*\(?[oO]ito\)?\s*dias\s*[uú]teis|prazo\s+m[íi]nimo\s+de\s+8\s+dias|art\.?\s*55,?\s*i,?\s*["']?a["']?|8\s+dias\s+[uú]teis|oito\s+dias)/i.test(c.corpus), mensagemFalha:'Pregão de bens sem prazo de 8 dias.', recomendacao:'Fixar prazo mínimo de 8 dias úteis.' },
   { id:'B5_02', bloco:5, nome:'Prazo mínimo de 10 dias úteis (serviços)', fundamento:'Art. 55, I, "b"', severidade:'CRITICA', aplicavel:c=>/preg[aã]o/i.test(c.modalidade?.modalidade || '') && c.meta?.tipoObjeto === 'servicos', test:c=>/(10\s+dias|dez\s+dias)/i.test(c.corpus), mensagemFalha:'Pregão de serviços sem prazo de 10 dias.', recomendacao:'Fixar prazo mínimo de 10 dias úteis.' },
   { id:'B5_03', bloco:5, nome:'Prazo mínimo de 35 dias úteis (Concorrência)', fundamento:'Art. 55, II', severidade:'CRITICA', aplicavel:c=>/concorr[eê]ncia/i.test(c.modalidade?.modalidade || ''), test:c=>/(35\s+dias|trinta\s+e\s+cinco)/i.test(c.corpus), mensagemFalha:'Concorrência sem prazo de 35 dias.', recomendacao:'Fixar prazo mínimo de 35 dias úteis.' },
   { id:'B5_04', bloco:5, nome:'Publicação no PNCP', fundamento:'Art. 54', severidade:'CRITICA', aplicavel:()=>true, test:c=>/(PNCP|Portal\s+Nacional\s+de\s+Contrata)/i.test(c.corpus), mensagemFalha:'Sem menção ao PNCP.', recomendacao:'Prever publicação obrigatória no PNCP.' },
   { id:'B5_05', bloco:5, nome:'Impugnação e recurso', fundamento:'Art. 164 · Art. 165', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(impugna[cç][õo]es?|esclarecimento|impugn[aá]vel)/i.test(c.corpus) || /(fase\s+[uú]nica|3\s+dias|tr[eê]s\s+dias|recurso|art\.?\s*165)/i.test(c.corpus), mensagemFalha:'Sem regras de impugnação/recurso.', recomendacao:'Fixar impugnação e recurso em fase única.' },
-
   { id:'B6_01', bloco:6, nome:'Fiscal e gestor designados', fundamento:'Art. 117', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const t = /(fiscal\s+titular|fiscaliza[cç][aã]o\s+do\s+contrato)/i.test(c.corpus);
       const s = /(fiscal\s+substituto|fiscal\s+suplente|substituto)/i.test(c.corpus);
@@ -431,8 +395,7 @@ function calcularRiscoProcesso(arquivos) {
 function agregarPorBloco(arquivos) {
   const agg = {};
   for (let b = 1; b <= 6; b++) {
-    agg[b] = { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0,
-               criticas: 0, medias: 0, baixas: 0 };
+    agg[b] = { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0, criticas: 0, medias: 0, baixas: 0 };
   }
   arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados))
     .forEach(a => {
@@ -501,14 +464,9 @@ function analisarTextoIndividual(corpus, opts = {}) {
     score: auditoria.score,
     risco: auditoria.risco,
     identificacao: {
-      objeto: objetoExibicao,
-      objetoTipo: meta.objeto.tipo,
-      modalidade: meta.modalidade,
-      natureza: meta.natureza,
-      criterio,
-      processo: meta.processo,
-      orgao: meta.orgao,
-      empresa: meta.empresa,
+      objeto: objetoExibicao, objetoTipo: meta.objeto.tipo,
+      modalidade: meta.modalidade, natureza: meta.natureza, criterio,
+      processo: meta.processo, orgao: meta.orgao, empresa: meta.empresa,
       caracteresAnalisados: corpus.length,
       linhasAnalisadas: corpus.split(/\r?\n/).length,
     },
@@ -518,9 +476,7 @@ function analisarTextoIndividual(corpus, opts = {}) {
       ignoradas: auditoria.totalIgnoradas,
       ok: auditoria.aplicaveis.filter(r => r.conforme).length,
       falha: auditoria.aplicaveis.filter(r => !r.conforme).length,
-      criticas: auditoria.criticasFalha,
-      medias: auditoria.mediasFalha,
-      baixas: auditoria.baixasFalha,
+      criticas: auditoria.criticasFalha, medias: auditoria.mediasFalha, baixas: auditoria.baixasFalha,
       porBloco: auditoria.porBloco,
     },
     resultados: auditoria.resultados,
@@ -703,7 +659,6 @@ function renderTabs() {
   });
   $('[data-novo-processo]')?.addEventListener('click', () => criarProcesso());
 }
-
 function renderBlocoCard(num, dados) {
   const pct = dados.total > 0 ? Math.round((dados.ok / dados.total) * 100) : 100;
   const nivel = nivelConformidade(pct);
@@ -725,7 +680,6 @@ function renderBlocoCard(num, dados) {
       </footer>
     </article>`;
 }
-
 function renderAchadosConsolidados(arquivos) {
   const todos = [];
   arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados)).forEach(a => {
@@ -739,7 +693,6 @@ function renderAchadosConsolidados(arquivos) {
   if (!todos.length) {
     return `<p style="padding:1.1rem 1.25rem;color:var(--ok);font-size:13px;font-weight:600;">✓ Nenhuma inconformidade identificada no processo.</p>`;
   }
-
   const linhas = todos.map(t => {
     const sev = t.severidade === 'CRITICA' ? 'alto' : t.severidade === 'MEDIA' ? 'medio' : 'baixo';
     const sevLabel = t.severidade === 'CRITICA' ? 'Crítica' : t.severidade === 'MEDIA' ? 'Média' : 'Baixa';
@@ -753,7 +706,6 @@ function renderAchadosConsolidados(arquivos) {
         </td>
       </tr>`;
   }).join('');
-
   return `
     <div class="tabela-responsive-wrapper">
       <table class="tabela-arquivos tabela-auditoria">
@@ -762,7 +714,6 @@ function renderAchadosConsolidados(arquivos) {
       </table>
     </div>`;
 }
-
 function renderWorkspace() {
   const p = getProcessoAtivo();
   if (!p) return;
@@ -866,14 +817,12 @@ function renderWorkspace() {
   bindEventosWorkspace();
   animarGauge();
 }
-
 function renderLinhaArquivo(procId, arq) {
   const score = arq.status === 'ok' && typeof arq.score === 'number' ? `${arq.score.toFixed(1)}%` : (arq.status === 'erro' ? 'Erro' : '…');
   const risco = arq.risco || '—';
   const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
   const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
   const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
-
   return `
     <tr>
       <td data-label="Arquivo">
@@ -896,7 +845,6 @@ function renderLinhaArquivo(procId, arq) {
       </td>
     </tr>`;
 }
-
 function animarGauge() {
   requestAnimationFrame(() => {
     const c = els.workspace.querySelector('.ws-metrica__gauge .value');
@@ -920,7 +868,6 @@ function bindEventosWorkspace() {
     });
     inputNome.addEventListener('keydown', e => { if (e.key === 'Enter') inputNome.blur(); });
   }
-
   const colorInput = els.workspace.querySelector('[data-color]');
   if (colorInput) {
     colorInput.addEventListener('input', () => {
@@ -940,9 +887,7 @@ function bindEventosWorkspace() {
       }
     });
   }
-
   els.workspace.querySelector('[data-delete-proc]')?.addEventListener('click', e => excluirProcesso(e.currentTarget.dataset.deleteProc));
-
   els.workspace.querySelector('[data-add-tag]')?.addEventListener('click', e => {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.addTag);
     if (!p) return;
@@ -952,12 +897,10 @@ function bindEventosWorkspace() {
     if (!p.tags.includes(limpa)) p.tags.push(limpa);
     renderWorkspace();
   });
-
   $$('[data-remove-tag]').forEach(el => el.addEventListener('click', () => {
     const p = state.processos.find(x => x.id === el.dataset.proc);
     if (p) { p.tags = p.tags.filter(t => t !== el.dataset.removeTag); renderWorkspace(); }
   }));
-
   $$('[data-del-arq]').forEach(btn => btn.addEventListener('click', () => removerArquivo(btn.dataset.proc, btn.dataset.delArq)));
   $$('[data-view-arq]').forEach(btn => btn.addEventListener('click', () => abrirModalArquivo(btn.dataset.proc, btn.dataset.viewArq)));
   $$('[data-pdf-arq]').forEach(btn => btn.addEventListener('click', () => {
@@ -965,17 +908,14 @@ function bindEventosWorkspace() {
     const a = p?.arquivos.find(x => x.id === btn.dataset.pdfArq);
     if (a && a.status === 'ok') exportarRelatorioAuditPDF(a);
   }));
-
   els.workspace.querySelector('[data-pdf-proc]')?.addEventListener('click', e => {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.pdfProc);
     if (p) exportarRelatorioProcessoConsolidadoPDF(p);
   });
-
   els.workspace.querySelector('[data-json-proc]')?.addEventListener('click', e => {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.jsonProc);
     if (p) exportarJSON([p]);
   });
-
   const dz = els.workspace.querySelector('[data-drop]');
   if (dz) {
     const procId = dz.dataset.drop;
@@ -993,7 +933,6 @@ function bindEventosWorkspace() {
     });
   }
 }
-
 function abrirInput(procId) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true;
@@ -1012,12 +951,10 @@ function abrirModalArquivo(procId, arqId) {
   const p = state.processos.find(x => x.id === procId);
   const a = p?.arquivos.find(x => x.id === arqId);
   if (!a || a.status !== 'ok') { toast('Detalhes não disponíveis.', 'error'); return; }
-
   const emoji = a.risco === 'ALTO' ? '🔴' : a.risco === 'MÉDIO' ? '🟡' : a.risco === 'BAIXO' ? '🟢' : '⚪';
   const corScore = a.risco === 'ALTO' ? 'var(--danger)' : a.risco === 'MÉDIO' ? 'var(--warn)' : 'var(--ok)';
   const id = a.identificacao || {};
   const st = a.estatisticas || {};
-
   const achadosHtml = (a.resultados || []).filter(r => r.aplicavel).map(r => {
     const cls = r.conforme ? '' : (r.severidade === 'CRITICA' ? 'achado--fail' : 'achado--warn');
     return `
@@ -1032,7 +969,6 @@ function abrirModalArquivo(procId, arqId) {
         ${!r.conforme ? `<div class="achado__body"><strong>Constatação:</strong> ${escapeHtml(r.mensagemFalha)}<div class="achado__rec"><strong>Recomendação:</strong> ${escapeHtml(r.recomendacao)}</div></div>` : ''}
       </div>`;
   }).join('');
-
   els.modalTitulo.textContent = a.nomeArquivo;
   els.modalBody.innerHTML = `
     <div class="detalhe-score">
@@ -1052,11 +988,9 @@ function abrirModalArquivo(procId, arqId) {
     </div>
     <h4 style="margin: 6px 0 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); font-weight: 800;">Achados</h4>
     <div class="detalhe-lista">${achadosHtml}</div>`;
-
   els.modal.classList.remove('is-hidden');
   $('#btnPdfModal')?.addEventListener('click', () => exportarRelatorioAuditPDF(a));
 }
-
 function fecharModal() {
   els.modal.classList.add('is-hidden');
   els.modalBody.innerHTML = '';
@@ -1066,12 +1000,12 @@ function fecharModal() {
  * 14. PDF INSTITUCIONAL — pdfMake (DESIGN EDITORIAL EXECUTIVO)
  * ======================================================================== */
 const PDF_PALETTE = {
-  primaria:    '#1e3a8a',   // Azul Marinho Executivo
-  secundaria:  '#2563eb',   // Azul Royal
-  texto:       '#1e293b',   // Grafite Escuro
+  primaria:    '#1e3a8a',
+  secundaria:  '#2563eb',
+  texto:       '#1e293b',
   textoMuted:  '#64748b',
   textoDim:    '#94a3b8',
-  zebra:       '#f8fafc',   // Cinza suave
+  zebra:       '#f8fafc',
   borda:       '#e2e8f0',
   headerTexto: '#ffffff',
   okBg:        '#dcfce7',  okFg:     '#15803d',
@@ -1079,19 +1013,16 @@ const PDF_PALETTE = {
   dangerBg:    '#fee2e2',  dangerFg: '#b91c1c',
   accentTeal:  '#0f766e',
 };
-
 function _riscoCor(risco) {
   if (risco === 'ALTO')  return { bg: PDF_PALETTE.dangerBg, fg: PDF_PALETTE.dangerFg };
   if (risco === 'MÉDIO') return { bg: PDF_PALETTE.warnBg,   fg: PDF_PALETTE.warnFg };
   return { bg: PDF_PALETTE.okBg, fg: PDF_PALETTE.okFg };
 }
-
 function _severidadeCor(sev) {
   if (sev === 'CRITICA') return { bg: PDF_PALETTE.dangerBg, fg: PDF_PALETTE.dangerFg, label: 'CRÍTICO' };
   if (sev === 'MEDIA')   return { bg: PDF_PALETTE.warnBg,   fg: PDF_PALETTE.warnFg,   label: 'MÉDIO' };
   return { bg: '#e0f2fe', fg: '#075985', label: 'BAIXO' };
 }
-
 function gerarDefinicaoPDF(rep, opts = {}) {
   const tipo = opts.tipo || 'arquivo';
   const nome = opts.nome || 'Documento';
@@ -1105,15 +1036,10 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   const dataFmt = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const numeroRelatorio = String(Math.floor(Math.random() * 900) + 100) + '/' + dataGeracao.getFullYear();
 
-  const PRIMARIA   = PDF_PALETTE.primaria;
-  const SECUNDARIA = PDF_PALETTE.secundaria;
-  const TEXTO      = PDF_PALETTE.texto;
-  const TEXTO_MUT  = PDF_PALETTE.textoMuted;
-  const TEXTO_DIM  = PDF_PALETTE.textoDim;
-  const ZEBRA      = PDF_PALETTE.zebra;
-  const BORDA      = PDF_PALETTE.borda;
+  const PRIMARIA = PDF_PALETTE.primaria, SECUNDARIA = PDF_PALETTE.secundaria;
+  const TEXTO = PDF_PALETTE.texto, TEXTO_MUT = PDF_PALETTE.textoMuted, TEXTO_DIM = PDF_PALETTE.textoDim;
+  const ZEBRA = PDF_PALETTE.zebra, BORDA = PDF_PALETTE.borda;
 
-  /* ---------- HEADER / FOOTER ---------- */
   const header = () => ({
     margin: [40, 20, 40, 0],
     columns: [
@@ -1121,7 +1047,6 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       { text: 'SISTEMA LICITAAUDIT · LEI Nº 14.133/2021', alignment: 'right', fontSize: 8, color: TEXTO_MUT, characterSpacing: 0.4 }
     ]
   });
-
   const footer = (currentPage, pageCount) => ({
     margin: [40, 20, 40, 0],
     columns: [
@@ -1130,25 +1055,15 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     ]
   });
 
-  /* ---------- BANNER TÍTULO ---------- */
   const banner = {
     table: { widths: ['*'], body: [[{
-      text: tipo === 'processo'
-        ? 'RELATÓRIO CONSOLIDADO DE PROCESSO'
-        : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE LICITATÓRIA',
-      fillColor: PRIMARIA, color: '#ffffff',
-      fontSize: 13, bold: true, alignment: 'center',
-      margin: [0, 8, 0, 8]
+      text: tipo === 'processo' ? 'RELATÓRIO CONSOLIDADO DE PROCESSO' : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE LICITATÓRIA',
+      fillColor: PRIMARIA, color: '#ffffff', fontSize: 13, bold: true, alignment: 'center', margin: [0, 8, 0, 8]
     }]] },
-    layout: 'noBorders',
-    margin: [0, 0, 0, 4]
+    layout: 'noBorders', margin: [0, 0, 0, 4]
   };
+  const subtitulo = { text: nome, fontSize: 10, color: TEXTO_MUT, alignment: 'center', italics: true, margin: [0, 0, 0, 16] };
 
-  const subtitulo = {
-    text: nome, fontSize: 10, color: TEXTO_MUT, alignment: 'center', italics: true, margin: [0, 0, 0, 16]
-  };
-
-  /* ---------- CARD DE METADADOS ---------- */
   const metadados = {
     table: {
       widths: ['22%', '78%'],
@@ -1163,68 +1078,37 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       ]
     },
     layout: {
-      hLineWidth: () => 0.5,
-      vLineWidth: () => 0,
-      hLineColor: () => BORDA,
-      paddingTop: () => 7,
-      paddingBottom: () => 7,
-      paddingLeft: () => 10,
-      paddingRight: () => 10,
+      hLineWidth: () => 0.5, vLineWidth: () => 0, hLineColor: () => BORDA,
+      paddingTop: () => 7, paddingBottom: () => 7, paddingLeft: () => 10, paddingRight: () => 10,
       fillColor: (rowIndex) => rowIndex % 2 === 0 ? ZEBRA : null
     },
     margin: [0, 0, 0, 18]
   };
 
-  /* ---------- DASHBOARD EXECUTIVO (3 colunas) ---------- */
-  const totalInconf   = st.falha || 0;
-  const totalCriticas = st.criticas || 0;
-  const totalMedias   = st.medias || 0;
-  const totalBaixas   = st.baixas || 0;
-
+  const totalInconf = st.falha || 0, totalCriticas = st.criticas || 0, totalMedias = st.medias || 0, totalBaixas = st.baixas || 0;
   const dashboard = {
     table: {
       widths: ['*', '*', '*'],
       body: [[
-        {
-          stack: [
-            { text: 'GRAU DE CONFORMIDADE', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
-            { text: `${score}%`, fontSize: 22, bold: true, color: PRIMARIA, alignment: 'center', margin: [0, 6, 0, 0] }
-          ],
-          fillColor: ZEBRA, margin: [8, 12, 8, 12]
-        },
-        {
-          stack: [
-            { text: 'CLASSIFICAÇÃO DE RISCO', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
-            {
-              table: { widths: ['*'], body: [[{
-                text: risco, fontSize: 12, bold: true, color: coresRisco.fg,
-                fillColor: coresRisco.bg, alignment: 'center', margin: [0, 6, 0, 6]
-              }]] },
-              layout: 'noBorders', margin: [0, 6, 0, 0]
-            }
-          ],
-          fillColor: ZEBRA, margin: [8, 12, 8, 12]
-        },
-        {
-          stack: [
-            { text: 'INCONFORMIDADES', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
-            { text: String(totalInconf), fontSize: 22, bold: true, color: totalInconf > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.okFg, alignment: 'center', margin: [0, 6, 0, 0] },
-            { text: `${totalCriticas} Críticas · ${totalMedias} Médias · ${totalBaixas} Baixas`, fontSize: 7.5, color: TEXTO_DIM, alignment: 'center', margin: [0, 3, 0, 0] }
-          ],
-          fillColor: ZEBRA, margin: [8, 12, 8, 12]
-        }
+        { stack: [
+          { text: 'GRAU DE CONFORMIDADE', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
+          { text: `${score}%`, fontSize: 22, bold: true, color: PRIMARIA, alignment: 'center', margin: [0, 6, 0, 0] }
+        ], fillColor: ZEBRA, margin: [8, 12, 8, 12] },
+        { stack: [
+          { text: 'CLASSIFICAÇÃO DE RISCO', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
+          { table: { widths: ['*'], body: [[{ text: risco, fontSize: 12, bold: true, color: coresRisco.fg, fillColor: coresRisco.bg, alignment: 'center', margin: [0, 6, 0, 6] }]] }, layout: 'noBorders', margin: [0, 6, 0, 0] }
+        ], fillColor: ZEBRA, margin: [8, 12, 8, 12] },
+        { stack: [
+          { text: 'INCONFORMIDADES', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
+          { text: String(totalInconf), fontSize: 22, bold: true, color: totalInconf > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.okFg, alignment: 'center', margin: [0, 6, 0, 0] },
+          { text: `${totalCriticas} Críticas · ${totalMedias} Médias · ${totalBaixas} Baixas`, fontSize: 7.5, color: TEXTO_DIM, alignment: 'center', margin: [0, 3, 0, 0] }
+        ], fillColor: ZEBRA, margin: [8, 12, 8, 12] }
       ]]
     },
-    layout: {
-      hLineWidth: () => 0.5,
-      vLineWidth: () => 0.5,
-      hLineColor: () => BORDA,
-      vLineColor: () => BORDA
-    },
+    layout: { hLineWidth: () => 0.5, vLineWidth: () => 0.5, hLineColor: () => BORDA, vLineColor: () => BORDA },
     margin: [0, 0, 0, 22]
   };
 
-  /* ---------- RESUMO POR BLOCO ---------- */
   const blocos = st.porBloco || {};
   const linhasBlocos = [1, 2, 3, 4, 5, 6].map(b => {
     const x = blocos[b] || { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0, criticas: 0 };
@@ -1239,37 +1123,31 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       { text: `${pct}%`,       alignment: 'center', fontSize: 9, color: corPct, bold: true }
     ];
   });
-
   const resumoBlocos = {
     table: {
       headerRows: 1,
       widths: ['6%', '44%', '13%', '13%', '12%', '12%'],
       body: [
         [
-          { text: '#',               bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: '#', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
           { text: 'BLOCO DE VERIFICAÇÃO', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] },
-          { text: 'APLICÁVEIS',      bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: 'OK',              bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: 'FALHAS',          bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
-          { text: '% OK',            bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] }
+          { text: 'APLICÁVEIS', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'OK', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'FALHAS', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: '% OK', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] }
         ],
         ...linhasBlocos
       ]
     },
     layout: {
-      hLineWidth: () => 0.4,
-      vLineWidth: () => 0.4,
-      hLineColor: () => BORDA,
-      vLineColor: () => BORDA,
+      hLineWidth: () => 0.4, vLineWidth: () => 0.4, hLineColor: () => BORDA, vLineColor: () => BORDA,
       fillColor: (i) => i === 0 ? PRIMARIA : (i % 2 === 0 ? ZEBRA : null),
       paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 6, paddingRight: () => 6
     },
     margin: [0, 0, 0, 20]
   };
 
-  /* ---------- QUADRO DETALHADO DE NÃO CONFORMIDADES ---------- */
   const falhas = (rep.resultados || []).filter(r => r.aplicavel && !r.conforme);
-
   const falhasBody = falhas.length === 0
     ? [[
         { text: '—', alignment: 'center', color: TEXTO_DIM, fontSize: 9 },
@@ -1279,76 +1157,55 @@ function gerarDefinicaoPDF(rep, opts = {}) {
     : falhas.map(r => {
         const sc = _severidadeCor(r.severidade);
         return [
-          {
-            stack: [
-              { text: sc.label, fontSize: 7.5, bold: true, color: sc.fg, alignment: 'center' },
-              { text: `[${r.id}]`, fontSize: 7, color: TEXTO_DIM, alignment: 'center', margin: [0, 2, 0, 0] }
-            ],
-            fillColor: sc.bg, margin: [2, 5, 2, 5]
-          },
-          {
-            stack: [
-              { text: r.nome, fontSize: 9, bold: true, color: '#0f172a' },
-              { text: r.mensagemFalha, fontSize: 8, color: '#475569', margin: [0, 3, 0, 3] },
-              { text: `→ ${r.recomendacao}`, fontSize: 7.5, color: PDF_PALETTE.accentTeal, italics: true }
-            ],
-            margin: [4, 3, 4, 3]
-          },
+          { stack: [
+            { text: sc.label, fontSize: 7.5, bold: true, color: sc.fg, alignment: 'center' },
+            { text: `[${r.id}]`, fontSize: 7, color: TEXTO_DIM, alignment: 'center', margin: [0, 2, 0, 0] }
+          ], fillColor: sc.bg, margin: [2, 5, 2, 5] },
+          { stack: [
+            { text: r.nome, fontSize: 9, bold: true, color: '#0f172a' },
+            { text: r.mensagemFalha, fontSize: 8, color: '#475569', margin: [0, 3, 0, 3] },
+            { text: `→ ${r.recomendacao}`, fontSize: 7.5, color: PDF_PALETTE.accentTeal, italics: true }
+          ], margin: [4, 3, 4, 3] },
           { text: r.fundamento, fontSize: 7.5, color: SECUNDARIA, italics: true, margin: [4, 3, 4, 3] }
         ];
       });
-
   const detalhado = {
     table: {
       headerRows: 1, dontBreakRows: true,
       widths: ['14%', '58%', '28%'],
       body: [
         [
-          { text: 'GRAU / ID',            bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'GRAU / ID', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
           { text: 'ACHADO E RECOMENDAÇÃO', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] },
-          { text: 'FUNDAMENTO LEGAL',      bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] }
+          { text: 'FUNDAMENTO LEGAL', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] }
         ],
         ...falhasBody
       ]
     },
     layout: {
-      hLineWidth: () => 0.4,
-      vLineWidth: () => 0.4,
-      hLineColor: () => BORDA,
-      vLineColor: () => BORDA,
+      hLineWidth: () => 0.4, vLineWidth: () => 0.4, hLineColor: () => BORDA, vLineColor: () => BORDA,
       fillColor: (i) => i === 0 ? PRIMARIA : null,
       paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 7, paddingRight: () => 7
     },
     margin: [0, 0, 0, 22]
   };
 
-  /* ---------- PARECER TÉCNICO ---------- */
   const parecerTexto = risco === 'ALTO'
     ? 'PUBLICAÇÃO DESACONSELHADA — Foram identificados vícios de severidade CRÍTICA/impeditiva que comprometem a legalidade do procedimento. Recomenda-se a devolução imediata dos autos à unidade requisitante para saneamento integral antes de qualquer publicação.'
     : risco === 'MÉDIO'
       ? 'APROVADO COM RESSALVAS — A análise identificou inconformidades de severidade média que devem ser sanadas previamente à publicação do edital. Após saneamento, recomenda-se nova submissão ao controle interno.'
       : 'APROVADO — O processo apresenta conformidade com os requisitos essenciais da Lei nº 14.133/2021, estando apto ao prosseguimento instrucional.';
-
-  const corParecerBg = risco === 'ALTO' ? PDF_PALETTE.dangerBg
-                     : risco === 'MÉDIO' ? PDF_PALETTE.warnBg
-                     : PDF_PALETTE.okBg;
-
+  const corParecerBg = risco === 'ALTO' ? PDF_PALETTE.dangerBg : risco === 'MÉDIO' ? PDF_PALETTE.warnBg : PDF_PALETTE.okBg;
   const parecer = {
-    table: {
-      widths: ['*'],
-      body: [[{
-        stack: [
-          { text: 'PARECER TÉCNICO DA AUDITORIA', fontSize: 8.5, bold: true, color: PRIMARIA, characterSpacing: 0.6 },
-          { text: parecerTexto, fontSize: 9.5, color: TEXTO, margin: [0, 6, 0, 0], alignment: 'justify', lineHeight: 1.45 }
-        ],
-        fillColor: corParecerBg, margin: [14, 12, 14, 12]
-      }]]
-    },
-    layout: 'noBorders',
-    margin: [0, 0, 0, 28]
+    table: { widths: ['*'], body: [[{
+      stack: [
+        { text: 'PARECER TÉCNICO DA AUDITORIA', fontSize: 8.5, bold: true, color: PRIMARIA, characterSpacing: 0.6 },
+        { text: parecerTexto, fontSize: 9.5, color: TEXTO, margin: [0, 6, 0, 0], alignment: 'justify', lineHeight: 1.45 }
+      ], fillColor: corParecerBg, margin: [14, 12, 14, 12]
+    }]] },
+    layout: 'noBorders', margin: [0, 0, 0, 28]
   };
 
-  /* ---------- ASSINATURA ---------- */
   const assinatura = {
     table: {
       dontBreakRows: true, widths: ['*'],
@@ -1360,117 +1217,64 @@ function gerarDefinicaoPDF(rep, opts = {}) {
           { text: 'Agente de Auditoria · LicitaAudit — Análise Automatizada', fontSize: 8.5, alignment: 'center', color: TEXTO_MUT },
           { text: (id.orgao || '').toUpperCase(), fontSize: 8, alignment: 'center', color: TEXTO_DIM, italics: true, margin: [0, 2, 0, 0] },
           { text: `${dataFmt} · Relatório ${numeroRelatorio}`, fontSize: 7.5, alignment: 'center', color: TEXTO_DIM, margin: [0, 6, 0, 0] }
-        ],
-        margin: [0, 8, 0, 10]
+        ], margin: [0, 8, 0, 10]
       }]]
     },
     layout: 'noBorders'
   };
 
-  /* ---------- MONTAGEM FINAL ---------- */
   return {
     pageSize: 'A4',
     pageMargins: [40, 50, 40, 50],
-
     header, footer,
-
-    defaultStyle: {
-      font: 'Roboto',
-      fontSize: 9,
-      color: TEXTO,
-      lineHeight: 1.35
-    },
-
+    defaultStyle: { font: 'Roboto', fontSize: 9, color: TEXTO, lineHeight: 1.35 },
     content: [
-      banner,
-      subtitulo,
-      metadados,
-      dashboard,
+      banner, subtitulo, metadados, dashboard,
       { text: 'RESUMO POR BLOCO DE VERIFICAÇÃO', style: 'secaoTitulo', keepWithNext: true },
       resumoBlocos,
       { text: 'QUADRO DETALHADO DE NÃO CONFORMIDADES', style: 'secaoTitulo', keepWithNext: true },
-      detalhado,
-      parecer,
-      assinatura
+      detalhado, parecer, assinatura
     ],
-
     styles: {
-      secaoTitulo: {
-        fontSize: 11,
-        bold: true,
-        color: PRIMARIA,
-        margin: [0, 10, 0, 6],
-        characterSpacing: 0.4,
-        keepWithNext: true
-      },
-      tableHeader: {
-        bold: true,
-        fontSize: 8.5,
-        color: '#ffffff',
-        fillColor: PRIMARIA,
-        alignment: 'left',
-        margin: [0, 3, 0, 3]
-      }
+      secaoTitulo: { fontSize: 11, bold: true, color: PRIMARIA, margin: [0, 10, 0, 6], characterSpacing: 0.4, keepWithNext: true },
+      tableHeader: { bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'left', margin: [0, 3, 0, 3] }
     }
   };
 }
-
-/* --------------------------------------------------------------------------
- * Wrappers públicos
- * ------------------------------------------------------------------------ */
 function exportarRelatorioAuditPDF(arq) {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   if (!arq || arq.status !== 'ok') { toast('Arquivo não disponível para exportação.', 'error'); return; }
   const dd = gerarDefinicaoPDF(arq, { tipo: 'arquivo', nome: arq.nomeArquivo });
   const safe = String(arq.nomeArquivo || 'arquivo').replace(/[/\\?%*:|"<>]/g, '_');
-  try {
-    pdfMake.createPdf(dd).download(`Relatorio_${safe}.pdf`);
-    toast('PDF individual gerado.', 'ok');
-  } catch (err) { console.error(err); toast('Erro ao gerar PDF.', 'error'); }
+  try { pdfMake.createPdf(dd).download(`Relatorio_${safe}.pdf`); toast('PDF individual gerado.', 'ok'); }
+  catch (err) { console.error(err); toast('Erro ao gerar PDF.', 'error'); }
 }
-
 function exportarRelatorioProcessoConsolidadoPDF(processo) {
   const arquivosOk = (processo?.arquivos || []).filter(a => a.status === 'ok');
   if (!arquivosOk.length) { toast('Nenhum arquivo analisado no processo.', 'error'); return; }
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
-
   const corpus = arquivosOk.map(a => `\n===== ${a.nomeArquivo} =====\n${a.texto}`).join('\n');
-  const res = analisarTextoIndividual(corpus, {
-    paramObjeto: els.paramObjeto.value,
-    paramModalidade: els.paramModalidade.value,
-    paramCriterio: els.paramCriterio.value,
-  });
-
+  const res = analisarTextoIndividual(corpus, { paramObjeto: els.paramObjeto.value, paramModalidade: els.paramModalidade.value, paramCriterio: els.paramCriterio.value });
   const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: processo.nome });
   const safe = String(processo.nome || 'processo').replace(/[/\\?%*:|"<>]/g, '_');
-  try {
-    pdfMake.createPdf(dd).download(`Relatorio_Processo_${safe}.pdf`);
-    toast('PDF consolidado do processo gerado.', 'ok');
-  } catch (err) { console.error(err); toast('Erro ao gerar PDF do processo.', 'error'); }
+  try { pdfMake.createPdf(dd).download(`Relatorio_Processo_${safe}.pdf`); toast('PDF consolidado do processo gerado.', 'ok'); }
+  catch (err) { console.error(err); toast('Erro ao gerar PDF do processo.', 'error'); }
 }
-
 function exportarPDFTodos() {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   const processosComArquivo = state.processos.filter(p => p.arquivos.some(a => a.status === 'ok'));
   if (!processosComArquivo.length) { toast('Nenhum processo com arquivos analisados.', 'error'); return; }
-
   const contents = [];
   processosComArquivo.forEach((p, idx) => {
     const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
     const corpus = arquivosOk.map(a => `\n===== ${a.nomeArquivo} =====\n${a.texto}`).join('\n');
-    const res = analisarTextoIndividual(corpus, {
-      paramObjeto: els.paramObjeto.value,
-      paramModalidade: els.paramModalidade.value,
-      paramCriterio: els.paramCriterio.value,
-    });
+    const res = analisarTextoIndividual(corpus, { paramObjeto: els.paramObjeto.value, paramModalidade: els.paramModalidade.value, paramCriterio: els.paramCriterio.value });
     const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: p.nome });
     if (idx > 0) contents.push({ text: '', pageBreak: 'before' });
     contents.push(...dd.content);
   });
-
   const ddFinal = {
-    pageSize: 'A4',
-    pageMargins: [40, 50, 40, 50],
+    pageSize: 'A4', pageMargins: [40, 50, 40, 50],
     defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.35 },
     header: () => ({
       margin: [40, 20, 40, 0],
@@ -1486,25 +1290,24 @@ function exportarPDFTodos() {
         { text: `Página ${p} de ${n}`, alignment: 'right', fontSize: 8, color: PDF_PALETTE.textoDim }
       ]
     }),
-    content: contents,
+    content: contents
   };
-
-  try {
-    pdfMake.createPdf(ddFinal).download(`LicitaAudit_Lote_${Date.now()}.pdf`);
-    toast(`${processosComArquivo.length} processo(s) em PDF único.`, 'ok');
-  } catch (err) { console.error(err); toast('Erro ao gerar PDF em lote.', 'error'); }
+  try { pdfMake.createPdf(ddFinal).download(`LicitaAudit_Lote_${Date.now()}.pdf`); toast(`${processosComArquivo.length} processo(s) em PDF único.`, 'ok'); }
+  catch (err) { console.error(err); toast('Erro ao gerar PDF em lote.', 'error'); }
 }
 
 /* ==========================================================================
- * 15. JSON
+ * 15. JSON — EXPORTAÇÃO E IMPORTAÇÃO MÚLTIPLA (v6.7)
  * ======================================================================== */
+
+/* ---------- Exportação ---------- */
 function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
-    ferramenta: 'LicitaAudit', versao: '6.6.0',
+    ferramenta: 'LicitaAudit', versao: '6.7.0',
     exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
-      id: p.id, nome: p.nome, cor: p.cor, tags: p.tags,
+      id: p.id, nome: p.nome, cor: p.cor, tags: p.tags, criadoEm: p.criadoEm,
       arquivos: p.arquivos.filter(a => a.status === 'ok').map(a => ({
         id: a.id, nomeArquivo: a.nomeArquivo, ext: a.ext, tamanho: a.tamanho,
         score: a.score, risco: a.risco, identificacao: a.identificacao,
@@ -1521,18 +1324,154 @@ function exportarJSON(processos = null) {
   URL.revokeObjectURL(url);
   toast('JSON exportado.', 'ok');
 }
-async function importarJSON(file) {
-  try {
-    const texto = await file.text();
-    const dados = JSON.parse(texto);
-    if (!dados.processos || !Array.isArray(dados.processos)) { toast('JSON inválido.', 'error'); return; }
-    state.processos = dados.processos.map(p => ({
-      ...p, arquivos: (p.arquivos || []).map(a => ({ ...a, status: 'ok' })),
-    }));
-    state.ativo = state.processos[0]?.id || null;
+
+/* ---------- Helper: leitura de arquivo como texto ---------- */
+function lerArquivoComoTexto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result || '');
+    reader.onerror = () => reject(reader.error || new Error('Falha na leitura do arquivo.'));
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+/* ---------- Normalizador: garante que qualquer JSON vire um processo válido ---------- */
+function normalizarProcessoImportado(proc) {
+  const arquivos = Array.isArray(proc?.arquivos) ? proc.arquivos : [];
+  return {
+    id: proc?.id || uid('proc'),
+    nome: (proc?.nome && String(proc.nome).trim()) || 'Processo importado',
+    cor: proc?.cor || CORES_PRESET[state.processos.length % CORES_PRESET.length],
+    tags: Array.isArray(proc?.tags) ? proc.tags.slice(0, 24) : [],
+    criadoEm: proc?.criadoEm || new Date().toISOString(),
+    _importadoEm: new Date().toISOString(),
+    arquivos: arquivos
+      .filter(a => a && typeof a === 'object')
+      .map(a => ({
+        ...a,
+        id: a.id || uid('arq'),
+        nomeArquivo: a.nomeArquivo || 'arquivo_importado',
+        ext: a.ext || 'txt',
+        tamanho: a.tamanho || (a.texto ? a.texto.length : 0),
+        status: 'ok',
+        resultados: Array.isArray(a.resultados) ? a.resultados : [],
+        correcoes: Array.isArray(a.correcoes) ? a.correcoes : [],
+        estatisticas: a.estatisticas || {
+          total: MATRIZ_CORE_30.length, aplicaveis: 0, ignoradas: 0,
+          ok: 0, falha: 0, criticas: 0, medias: 0, baixas: 0, porBloco: {},
+        },
+        identificacao: a.identificacao || {},
+      })),
+  };
+}
+
+/* ---------- Extrator de processos de um JSON bruto (flexível) ---------- */
+function extrairProcessosDoJSON(dados) {
+  // 1) Formato preferencial: { processos: [...] }
+  if (dados && Array.isArray(dados.processos)) return dados.processos;
+
+  // 2) Array direto de processos
+  if (Array.isArray(dados)) return dados;
+
+  // 3) Objeto único de processo exportado fora de wrapper
+  if (dados && typeof dados === 'object' && (dados.id || dados.nome || dados.arquivos)) return [dados];
+
+  // 4) Formato desconhecido
+  return [];
+}
+
+/* ---------- IMPORTANTE: Importação múltipla com merge inteligente ---------- */
+async function importarJSONMultiplos(files) {
+  const lista = Array.from(files || []).filter(f => f && /\.json$/i.test(f.name));
+  if (!lista.length) { toast('Nenhum arquivo .json válido selecionado.', 'error'); return; }
+
+  showLoader(`Importando ${lista.length} arquivo(s) JSON…`);
+
+  let totalProcessos = 0;
+  let totalArquivos  = 0;
+  let totalRenomeados = 0;
+  let totalColisoesArq = 0;
+  const falhas = [];
+
+  for (const file of lista) {
+    try {
+      const conteudo = await lerArquivoComoTexto(file);
+      const dados = JSON.parse(conteudo);
+      const brutos = extrairProcessosDoJSON(dados);
+
+      if (!brutos.length) {
+        falhas.push(`${file.name}: estrutura não reconhecida`);
+        continue;
+      }
+
+      for (const bruto of brutos) {
+        const novo = normalizarProcessoImportado(bruto);
+
+        // Anti-colisão de ID do PROCESSO
+        const colide = state.processos.some(p => p.id === novo.id);
+        if (colide) {
+          novo.id = uid('proc');
+          novo.nome = `${novo.nome} (Importado)`;
+          totalRenomeados++;
+        }
+
+        // Anti-colisão de IDs dos ARQUIVOS (por processo)
+        const idsArquivosExistentes = new Set(
+          state.processos.flatMap(p => p.arquivos.map(a => a.id))
+        );
+        novo.arquivos.forEach(a => {
+          if (idsArquivosExistentes.has(a.id)) {
+            a.id = uid('arq');
+            totalColisoesArq++;
+          }
+          idsArquivosExistentes.add(a.id);
+        });
+
+        state.processos.push(novo);
+        totalProcessos++;
+        totalArquivos += novo.arquivos.length;
+      }
+    } catch (err) {
+      console.error(`Erro ao processar "${file.name}":`, err);
+      falhas.push(`${file.name}: ${err.message || 'JSON inválido'}`);
+    }
+  }
+
+  hideLoader();
+
+  if (totalProcessos > 0) {
+    if (!state.ativo) state.ativo = state.processos[0]?.id || null;
     renderTudo();
-    toast(`${state.processos.length} processo(s) carregado(s).`, 'ok');
-  } catch (err) { console.error(err); toast('Erro ao carregar JSON.', 'error'); }
+
+    const partes = [];
+    partes.push(`✅ ${totalProcessos} processo(s)`);
+    partes.push(`${totalArquivos} arquivo(s)`);
+    partes.push(`de ${lista.length} JSON`);
+
+    if (totalRenomeados > 0)  partes.push(`· ${totalRenomeados} renomeado(s) por colisão`);
+    if (totalColisoesArq > 0) partes.push(`· ${totalColisoesArq} ID(s) de arquivo regenerado(s)`);
+    if (falhas.length > 0)    partes.push(`· ${falhas.length} arquivo(s) ignorado(s)`);
+
+    toast(partes.join(' '), 'ok');
+
+    // Log detalhado no console
+    console.info(
+      `%cLicitaAudit · Importação múltipla`,
+      'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
+      { processos: totalProcessos, arquivos: totalArquivos, renomeados: totalRenomeados, colisoesArquivo: totalColisoesArq, falhas }
+    );
+  } else {
+    toast(`⚠️ Nenhum processo pôde ser importado. Verifique os ${lista.length} arquivo(s) selecionado(s).`, 'error');
+  }
+
+  if (falhas.length) {
+    console.warn('Arquivos com falha na importação:', falhas);
+  }
+}
+
+/* ---------- Wrapper de compatibilidade (importação de 1 arquivo) ---------- */
+async function importarJSON(file) {
+  return importarJSONMultiplos([file]);
 }
 
 /* ==========================================================================
@@ -1593,14 +1532,11 @@ Fiscal titular e fiscal substituto designados. Gestor do contrato designado.
 Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sanções administrativas previstas.`;
 
   const p1 = criarProcesso('Processo A — Aquisição de TI');
-  p1.cor = CORES_PRESET[0];
-  p1.tags = ['TI', 'Urgente', '2026'];
+  p1.cor = CORES_PRESET[0]; p1.tags = ['TI', 'Urgente', '2026'];
   const p2 = criarProcesso('Processo B — Manutenção Predial');
-  p2.cor = CORES_PRESET[2];
-  p2.tags = ['Predial', 'Contínuo'];
+  p2.cor = CORES_PRESET[2]; p2.tags = ['Predial', 'Contínuo'];
   const p3 = criarProcesso('Processo C — Kits de Merenda');
-  p3.cor = CORES_PRESET[1];
-  p3.tags = ['Alimentação', 'Escolas'];
+  p3.cor = CORES_PRESET[1]; p3.tags = ['Alimentação', 'Escolas'];
 
   (async () => {
     const res = analisarTextoIndividual(exemploA, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto' });
@@ -1639,10 +1575,15 @@ function bindEventosGlobais() {
   els.themeToggle?.addEventListener('click', toggleTheme);
   els.pdfAllBtn?.addEventListener('click', exportarPDFTodos);
   els.jsonBtn?.addEventListener('click', () => exportarJSON());
+
+  /* ---------- IMPORTAÇÃO MÚLTIPLA ---------- */
   els.jsonLoadBtn?.addEventListener('click', () => els.jsonLoadInput.click());
-  els.jsonLoadInput?.addEventListener('change', e => {
-    if (e.target.files?.[0]) importarJSON(e.target.files[0]);
-    e.target.value = '';
+  els.jsonLoadInput?.addEventListener('change', async e => {
+    const files = e.target.files;
+    if (files?.length) {
+      await importarJSONMultiplos(files);
+    }
+    e.target.value = ''; // permite reimportar o mesmo arquivo
   });
 
   $$('[data-close-modal]').forEach(el => el.addEventListener('click', fecharModal));
@@ -1693,7 +1634,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v6.6 · Motor abrangente + PDF editorial executivo'
+    '· v6.7 · Importação múltipla de JSON com merge inteligente'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
