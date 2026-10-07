@@ -1,15 +1,12 @@
 /* ============================================================================
  * LicitaAudit · app.js
  * ----------------------------------------------------------------------------
- * v1.6.0 — Correções acumuladas:
- *   • extrairObjetoPredominante — resiliente a Markdown ("##", "###"), numeração
- *     ("1.", "1)", "I.") e quebras de linha. Retorna rótulo amigável.
- *   • validarCompatibilidadeObjetoModalidade — retorna { status, detalhe,
- *     correcao } com regra explícita Pregão × Serviços comuns / TI.
- *   • Detecção da Lei 8.666/93 com contexto de negação (±1 linha).
- *   • Análise ISOLADA POR LINHA com marcadores [x] / [ ].
- *   • Avaliação AUTORITATIVA por termo principal (TR, ETP, Matriz, Estimativa).
- *   • Truncamento de nome de arquivo preservando a extensão.
+ * v1.7.0 — Correções acumuladas + Repositório e Relatório de Auditoria:
+ *   • Dashboard Executivo (Índice + Risco) e Ficha Técnica de Metadados.
+ *   • Matriz de Achados e Recomendações (tabela categorizada).
+ *   • Exportação PDF oficial (pdfMake) timbrada e assinável.
+ *   • Exportação JSON estruturada para integração e backup.
+ *   • Motor de regras v1.6.0 (ETP, TR, Matriz, Objeto × Modalidade, Lei 8.666).
  * ========================================================================== */
 
 'use strict';
@@ -31,6 +28,7 @@ const els = {
   fileList:        $('#fileList'),
   analyzeBtn:      $('#analyzeBtn'),
   clearBtn:        $('#clearBtn'),
+  pdfBtn:          $('#pdfBtn'),
   printBtn:        $('#printBtn'),
   jsonBtn:         $('#jsonBtn'),
   emptyState:      $('#emptyState'),
@@ -123,9 +121,7 @@ const POSITIVE_MARKERS = [
 function splitLines(corpus) {
   return corpus
     .split(/\r?\n/)
-    .map((raw, idx) => ({
-      idx, raw, trimmed: raw.trim(), normalized: normalize(raw),
-    }))
+    .map((raw, idx) => ({ idx, raw, trimmed: raw.trim(), normalized: normalize(raw) }))
     .filter((l) => l.trimmed.length > 0 && !/^={3,}/.test(l.trimmed));
 }
 
@@ -157,10 +153,7 @@ function evalRequirementByLine(lines, terms) {
   const matches = [];
   for (const line of lines) {
     for (const term of terms) {
-      if (lineContainsTerm(line.raw, term)) {
-        matches.push({ line, term });
-        break;
-      }
+      if (lineContainsTerm(line.raw, term)) { matches.push({ line, term }); break; }
     }
   }
 
@@ -193,10 +186,7 @@ function evalRequirementWithPrimaryTerm(lines, primaryTerms, fallbackTerms = [])
   const primaryMatches = [];
   for (const line of lines) {
     for (const term of primaryTerms) {
-      if (lineContainsTerm(line.raw, term)) {
-        primaryMatches.push({ line, term });
-        break;
-      }
+      if (lineContainsTerm(line.raw, term)) { primaryMatches.push({ line, term }); break; }
     }
   }
 
@@ -268,29 +258,15 @@ function extractModalidadeField(text) {
   ]);
 }
 
-/* ============================================================================
- * v1.6.0 · extrairObjetoPredominante
- * ----------------------------------------------------------------------------
- * Captura o texto do objeto após o rótulo, tolerando:
- *   • Cabeçalhos Markdown (#, ##, ###, ...)
- *   • Numeração ("1.", "1)", "I.")
- *   • Separadores ":", "-", "–", "—"
- *   • Rótulo e valor na mesma linha OU em linha seguinte
- *   • Bloco multilinha até a próxima seção conhecida
- * Retorna { tipo, textoExtraido } com rótulo amigável para exibição.
- * ======================================================================== */
 function extrairObjetoPredominante(textoCompleto) {
   const texto = String(textoCompleto || '');
 
-  // Regex principal — Markdown + numeração + quebra de linha obrigatória
   const RX_PRINCIPAL =
     /(?:^|\n)\s*(?:#+\s*)?(?:\d+[\.\)]\s*|[IVX]+\.\s*)?(?:Identificação do Objeto|Objeto do Processo|Objeto da Contratação|Objeto)\s*[:\-–—]*\s*\n+([^\n#]+)/i;
 
-  // Fallback 1: rótulo + valor na mesma linha
   const RX_MESMA_LINHA =
     /(?:^|\n)\s*(?:#+\s*)?(?:\d+[\.\)]\s*|[IVX]+\.\s*)?(?:Identificação do Objeto|Objeto do Processo|Objeto da Contratação|Objeto)\s*[:\-–—]+\s*([^\n#]{3,600})/i;
 
-  // Fallback 2: bloco multilinha até a próxima seção conhecida
   const RX_MULTILINHA =
     /(?:^|\n)\s*(?:#+\s*)?(?:\d+[\.\)]\s*|[IVX]+\.\s*)?(?:Identificação do Objeto|Objeto do Processo|Objeto da Contratação|Objeto)\s*[:\-–—]*\s*\n?\s*([\s\S]{3,800}?)(?=\n\s*(?:#+\s*)?(?:\d+[\.\)]\s*)?(?:Modalidade|Checklist|Justificativa|Fundamenta|Dota|Estimativa|Crit[eé]rio|Prazo|Do\s+Objeto|Da\s+Contrata)|\n\s*\n|$)/i;
 
@@ -302,18 +278,12 @@ function extrairObjetoPredominante(textoCompleto) {
         .replace(/^[\s\-–—:.,;]+|[\s\-–—:.,;]+$/g, '')
         .replace(/\s+/g, ' ')
         .trim();
-      if (candidato.length >= 3) {
-        textoObjeto = candidato.slice(0, 600);
-        break;
-      }
+      if (candidato.length >= 3) { textoObjeto = candidato.slice(0, 600); break; }
     }
   }
 
-  if (!textoObjeto) {
-    return { tipo: 'Não identificado', textoExtraido: '' };
-  }
+  if (!textoObjeto) return { tipo: 'Não identificado', textoExtraido: '' };
 
-  // Classificação interna do tipo do objeto
   if (
     /\bTI\b|infraestrutura|apoio\s+administrativo|servi[cç]os?\s+comuns?|manuten[cç][aã]o|inform[aá]tica|software|help\s*desk|service\s*desk|suporte\s+t[eé]cnico/i
       .test(textoObjeto)
@@ -357,21 +327,11 @@ const OBJETO_LABEL_PT = {
   indefinido:           'Não identificado',
 };
 
-/* ============================================================================
- * v1.6.0 · validarCompatibilidadeObjetoModalidade
- * ----------------------------------------------------------------------------
- * Recebe o TIPO do objeto (rótulo amigável — "Serviços comuns / TI", etc.)
- * e a modalidade (rótulo PT).
- *
- * Retorna:
- *   { status: 'Conforme'|'Não conforme'|'Atenção', detalhe, correcao }
- * ======================================================================== */
 function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
   const tipo   = String(tipoObjeto || 'Não identificado').trim();
   const mod    = String(modalidade  || 'Não identificada').trim();
   const modLow = mod.toLowerCase();
 
-  // ---------- Objeto/modalidade não identificados ----------
   if (tipo === 'Não identificado' || modLow.includes('não identific')) {
     return {
       status: 'Atenção',
@@ -380,7 +340,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- ⭐ Regra de ouro: Pregão × Serviços comuns / TI ----------
   if (tipo === 'Serviços comuns / TI' && modLow.includes('pregão')) {
     return {
       status: 'Conforme',
@@ -389,7 +348,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Pregão × Serviços em geral ----------
   if (tipo === 'Serviços em geral' && modLow.includes('pregão')) {
     return {
       status: 'Conforme',
@@ -398,7 +356,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Leilão × Serviços comuns / TI ----------
   if (modLow.includes('leilão') && tipo === 'Serviços comuns / TI') {
     return {
       status: 'Não conforme',
@@ -410,7 +367,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Leilão × qualquer outro objeto (que não seja alienação) ----------
   if (modLow.includes('leilão')) {
     return {
       status: 'Não conforme',
@@ -423,7 +379,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Concurso × não-intelectual ----------
   if (modLow.includes('concurso') && tipo !== 'Trabalho técnico, científico ou artístico') {
     return {
       status: 'Não conforme',
@@ -434,7 +389,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Diálogo Competitivo × não-especial ----------
   if (modLow.includes('diálogo') || modLow.includes('dialogo')) {
     const ok = ['Serviços especiais', 'Obras e serviços de engenharia'].includes(tipo);
     if (!ok) {
@@ -448,7 +402,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     }
   }
 
-  // ---------- Concorrência — aceita praticamente todos os objetos ----------
   if (modLow.includes('concorrência') || modLow.includes('concorrencia')) {
     return {
       status: 'Conforme',
@@ -457,7 +410,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Dispensa / Inexigibilidade ----------
   if (modLow.includes('dispensa') || modLow.includes('inexigibilidade')) {
     return {
       status: 'Conforme',
@@ -468,7 +420,6 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
     };
   }
 
-  // ---------- Fallback ----------
   return {
     status: 'Atenção',
     detalhe:
@@ -479,7 +430,7 @@ function validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidade) {
 }
 
 /* ============================================================================
- * v1.5.0 · Verificação da Lei 8.666/93 com CONTEXTO DE NEGAÇÃO
+ * Verificação da Lei 8.666/93 com contexto de negação
  * ======================================================================== */
 const RX_LEI_ANTIGA = /\b8\.?\s?666\b/;
 const RX_NEGACAO_LEI_ANTIGA =
@@ -596,7 +547,64 @@ const KB = {
 };
 
 /* ==========================================================================
- * 8. MOTOR DE REGRAS
+ * 8. HELPERS DE AUDITORIA (v1.7.0)
+ * ======================================================================== */
+
+/** Classifica o risco do processo a partir do índice de conformidade. */
+function classificarRisco(score) {
+  if (score >= 90) {
+    return {
+      nivel: 'BAIXO',
+      titulo: 'Risco Baixo',
+      descricao: 'Processo apto para publicação. Nenhum vício impeditivo identificado nos documentos analisados.',
+      cor: '#10b981',
+      badge: 'badge--ok',
+      emoji: '🟢',
+    };
+  }
+  if (score >= 70) {
+    return {
+      nivel: 'MÉDIO',
+      titulo: 'Risco Médio',
+      descricao: 'Recomendado saneamento prévio dos apontamentos antes da publicação do edital.',
+      cor: '#f59e0b',
+      badge: 'badge--warn',
+      emoji: '🟡',
+    };
+  }
+  return {
+    nivel: 'ALTO',
+    titulo: 'Risco Alto / Inviável',
+    descricao: 'Contém vícios insanáveis ou ilegalidades graves. A publicação é desaconselhada até o saneamento integral.',
+    cor: '#dc2626',
+    badge: 'badge--danger',
+    emoji: '🔴',
+  };
+}
+
+/** Extrai metadados administrativos do corpus para a ficha técnica. */
+function extrairMetadadosAuditoria(corpus) {
+  const t = String(corpus || '');
+  const out = { processo: 'Não identificado', valor: 'Não informado', orgao: 'ÓRGÃO / ENTIDADE PÚBLICA' };
+
+  const mProc = t.match(
+    /(?:processo|edital|pregao|pregão|concorrência|concorrencia|concurso|leilão|dispensa|inexigibilidade)\s*(?:n[°º.]?|numero|número)?\s*([\d]{1,8}[\d.\/\-]{0,20}\d)/i
+  );
+  if (mProc) out.processo = mProc[1].trim();
+
+  const mValor = t.match(/R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i);
+  if (mValor) out.valor = `R$ ${mValor[1]}`;
+
+  const mOrgao = t.match(
+    /\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Assembleia|Secretaria|Fundação|Autarquia)[^\n,.;]{0,80}/i
+  );
+  if (mOrgao) out.orgao = mOrgao[0].replace(/\s+/g, ' ').trim();
+
+  return out;
+}
+
+/* ==========================================================================
+ * 9. MOTOR DE REGRAS
  * ======================================================================== */
 
 function buildCorpus() {
@@ -614,14 +622,10 @@ function runAudit() {
   const modalidadeParam = els.paramModalidade.value;
   const criterioParam   = els.paramCriterio.value;
 
-  /* ---------- Extração dos campos rotulados ---------- */
   const modalidadeField     = extractModalidadeField(corpus);
   const modalidadeFromField = classifyModalidadeValue(modalidadeField);
+  const objetoExtraido      = extrairObjetoPredominante(corpus);
 
-  /* ---------- Extração do OBJETO (NOVA função v1.6.0) ---------- */
-  const objetoExtraido = extrairObjetoPredominante(corpus);
-
-  /* ---------- Rótulos finais para exibição ---------- */
   const tipoObjeto = objetoParam !== 'auto'
     ? (OBJETO_LABEL_PT[objetoParam] || objetoParam)
     : objetoExtraido.tipo;
@@ -634,7 +638,6 @@ function runAudit() {
     ? criterioParam
     : detectCriterioHeuristic(corpus);
 
-  /* ---------- Checagens ---------- */
   const checks = [];
 
   const fmtEvidence = (r, fallback) => {
@@ -697,7 +700,7 @@ function runAudit() {
     });
   }
 
-  // 4. Dotação orçamentária
+  // 4. Dotação
   {
     const r = evalRequirementByLine(lines, KB.dotacao);
     checks.push({
@@ -749,16 +752,13 @@ function runAudit() {
     });
   }
 
-  // 7. Compatibilidade Objeto × Modalidade (NOVA função v1.6.0)
+  // 7. Compatibilidade Objeto × Modalidade
   {
     const compat = validarCompatibilidadeObjetoModalidade(tipoObjeto, modalidadeLabel);
-
-    const status = compat.status === 'Conforme'     ? 'ok'
+    const status = compat.status === 'Conforme' ? 'ok'
                  : compat.status === 'Não conforme' ? 'danger'
                  : 'warn';
-
     const prefix = status === 'ok' ? '✓ ' : status === 'danger' ? '❌ ' : '⚠️ ';
-
     checks.push({
       id: 'compat',
       requisito: 'Compatibilidade Objeto × Modalidade',
@@ -799,7 +799,7 @@ function runAudit() {
     });
   }
 
-  // 10. Alerta: Lei 8.666/93 — com contexto de negação
+  // 10. Lei 8.666/93
   {
     const r = verificarLeiAntiga(corpus);
     checks.push({
@@ -851,8 +851,15 @@ function runAudit() {
       sugestao: c.correcao,
     }));
 
+  /* ---------- Metadados de auditoria ---------- */
+  const risco = classificarRisco(score);
+  const metaAud = extrairMetadadosAuditoria(corpus);
+  const dataGeracao = new Date();
+  const numeroRelatorio =
+    String(Math.floor(Math.random() * 900) + 100) + '/' + dataGeracao.getFullYear();
+
   return {
-    geradoEm: new Date().toISOString(),
+    geradoEm: dataGeracao.toISOString(),
     statusGeral, score,
     estatisticas: { total, ok, warn, danger },
     identificacao: {
@@ -866,6 +873,15 @@ function runAudit() {
       arquivosAnalisados:   state.files.filter((f) => f.status === 'ok').length,
       caracteresAnalisados: corpus.length,
       linhasAnalisadas:     lines.length,
+    },
+    auditoria: {
+      numeroRelatorio,
+      dataGeracao: dataGeracao.toISOString(),
+      risco: risco.nivel,
+      riscoInfo: risco,
+      processo: metaAud.processo,
+      valor: metaAud.valor,
+      orgao: metaAud.orgao,
     },
     checks,
     correcoes,
@@ -891,7 +907,7 @@ function detectCriterioHeuristic(text) {
 }
 
 /* ==========================================================================
- * 9. RENDERIZAÇÃO
+ * 10. RENDERIZAÇÃO
  * ======================================================================== */
 
 const STATUS_LABEL = {
@@ -911,74 +927,151 @@ const CRITERIO_LABEL = {
   'maior-retorno': 'Maior retorno econômico', 'indefinido': 'Não identificado',
 };
 
+const SEV_LABEL = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+const SEV_CLASS = { alta: 'sev-pill--alta', media: 'sev-pill--media', baixa: 'sev-pill--baixa' };
+
 function renderReport(rep) {
   const statusInfo  = STATUS_LABEL[rep.statusGeral];
   const statusColor = STATUS_COLOR[rep.statusGeral];
   const dashArray   = 2 * Math.PI * 44;
   const dashValue   = (rep.score / 100) * dashArray;
 
-  const html = `
-    <section class="card status-card" aria-label="Status geral da auditoria">
-      <div class="status-card__gauge" role="img" aria-label="Índice de conformidade: ${rep.score}%">
-        <svg viewBox="0 0 100 100">
-          <circle class="track" cx="50" cy="50" r="44"></circle>
-          <circle class="value" cx="50" cy="50" r="44"
-            style="stroke:${statusColor}; stroke-dasharray:${dashValue} ${dashArray};"></circle>
-        </svg>
-        <div class="status-card__score">${rep.score}<small>%</small></div>
-      </div>
-      <div class="status-card__info">
-        <span class="badge ${rep.statusGeral === 'aprovado' ? 'badge--ok' : rep.statusGeral === 'requer-correcoes' ? 'badge--warn' : 'badge--danger'}">
-          ${statusInfo.titulo}
-        </span>
-        <h3 style="margin-top:8px">${statusInfo.titulo}</h3>
-        <p>${statusInfo.desc}</p>
-      </div>
-      <div class="status-card__metrics">
-        <div class="metric"><div class="metric__value ok">${rep.estatisticas.ok}</div><div class="metric__label">Conformes</div></div>
-        <div class="metric"><div class="metric__value warn">${rep.estatisticas.warn}</div><div class="metric__label">Atenção</div></div>
-        <div class="metric"><div class="metric__value danger">${rep.estatisticas.danger}</div><div class="metric__label">Divergentes</div></div>
+  const risco = rep.auditoria?.riscoInfo || classificarRisco(rep.score);
+  const meta  = rep.auditoria || {};
+
+  /* ---------- Matriz de achados ---------- */
+  const achados = rep.checks
+    .filter((c) => c.status !== 'ok')
+    .map((c) => {
+      const sevKey = c.status === 'danger' ? 'alta' : 'media';
+      return `
+        <tr>
+          <td>
+            <span class="sev-pill ${SEV_CLASS[sevKey]}">${SEV_LABEL[sevKey]}</span>
+          </td>
+          <td>
+            <strong>${escapeHtml(c.requisito)}</strong>
+            <div style="margin-top:4px;font-size:12.5px;color:var(--text-muted);line-height:1.55;">
+              ${escapeHtml(c.evidencia)}
+            </div>
+          </td>
+          <td>
+            <span class="matrix__law">${escapeHtml(c.lei)}</span>
+          </td>
+          <td>
+            ${c.correcao
+              ? `<div class="matrix__rec"><strong>Recomendação:</strong> ${escapeHtml(c.correcao)}</div>`
+              : '<em style="color:var(--text-dim);font-size:12px;">—</em>'}
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const matrizHtml = achados
+    ? `
+      <section class="card">
+        <h3 class="card__title">Matriz de Achados e Recomendações</h3>
+        <div class="matrix-wrap">
+          <table class="matrix">
+            <thead>
+              <tr>
+                <th style="width:100px;">Severidade</th>
+                <th>Constatação do Auditor</th>
+                <th style="width:180px;">Fundamento Legal</th>
+                <th style="width:280px;">Recomendação de Saneamento</th>
+              </tr>
+            </thead>
+            <tbody>${achados}</tbody>
+          </table>
+        </div>
+      </section>
+    `
+    : `
+      <section class="card">
+        <h3 class="card__title">Matriz de Achados e Recomendações</h3>
+        <p style="font-size:13px;color:var(--text-muted);">
+          ✓ Nenhuma inconformidade identificada. O processo atende a todos os requisitos analisados.
+        </p>
+      </section>
+    `;
+
+  /* ---------- Dashboard executivo ---------- */
+  const dashboardHtml = `
+    <section class="card" aria-label="Resumo executivo da auditoria">
+      <h3 class="card__title">Resumo Executivo</h3>
+      <div class="exec-dashboard">
+        <div class="risk-card" style="--risk-color:${risco.cor};">
+          <span class="risk-card__emoji" aria-hidden="true">${risco.emoji}</span>
+          <span class="risk-card__label">Classificação de Risco</span>
+          <div class="risk-card__title">${risco.titulo}</div>
+          <p class="risk-card__desc">${risco.descricao}</p>
+        </div>
+
+        <div class="score-card">
+          <div class="score-card__gauge" role="img" aria-label="Índice de conformidade: ${rep.score}%">
+            <svg viewBox="0 0 100 100">
+              <circle class="track" cx="50" cy="50" r="44"></circle>
+              <circle class="value" cx="50" cy="50" r="44"
+                style="stroke:${statusColor}; stroke-dasharray:${dashValue} ${dashArray};"></circle>
+            </svg>
+            <div class="score-card__number">${rep.score}<small>%</small></div>
+          </div>
+          <div class="score-card__legend">
+            <h3>${statusInfo.titulo}</h3>
+            <p>${statusInfo.desc}</p>
+            <span class="score-card__pill">
+              ${rep.estatisticas.ok} conformes · ${rep.estatisticas.warn} atenção · ${rep.estatisticas.danger} divergentes
+            </span>
+          </div>
+        </div>
       </div>
     </section>
+  `;
 
-    <div class="grid-2">
-      <section class="card">
-        <h3 class="card__title">Identificação do processo</h3>
-        <div class="kv">
-          <div class="kv__row"><span class="kv__key">Objeto predominante</span>
-            <span class="kv__val">${escapeHtml(rep.identificacao.objeto)}</span></div>
-          <div class="kv__row"><span class="kv__key">Modalidade</span>
-            <span class="kv__val">${escapeHtml(rep.identificacao.modalidade)}</span></div>
-          <div class="kv__row"><span class="kv__key">Critério de julgamento</span>
-            <span class="kv__val">${CRITERIO_LABEL[rep.identificacao.criterio] || rep.identificacao.criterio}</span></div>
+  /* ---------- Ficha técnica ---------- */
+  const fichaHtml = `
+    <section class="card">
+      <h3 class="card__title">Ficha Técnica do Processo</h3>
+      <div class="exec-meta">
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Nº do Processo</span>
+          <span class="exec-meta__val">${escapeHtml(meta.processo || 'Não identificado')}</span>
         </div>
-        ${rep.identificacao.objetoField ? `
-          <div class="field-evidence">
-            <span class="field-evidence__label">Campo "Objeto" extraído:</span>
-            <span class="field-evidence__value">${escapeHtml(rep.identificacao.objetoField)}</span>
-          </div>` : ''}
-        ${rep.identificacao.modalidadeField ? `
-          <div class="field-evidence">
-            <span class="field-evidence__label">Campo "Modalidade" extraído:</span>
-            <span class="field-evidence__value">${escapeHtml(rep.identificacao.modalidadeField)}</span>
-          </div>` : ''}
-      </section>
-
-      <section class="card">
-        <h3 class="card__title">Escopo da análise</h3>
-        <div class="kv">
-          <div class="kv__row"><span class="kv__key">Documentos analisados</span>
-            <span class="kv__val">${rep.identificacao.arquivosAnalisados}</span></div>
-          <div class="kv__row"><span class="kv__key">Linhas analisadas</span>
-            <span class="kv__val">${rep.identificacao.linhasAnalisadas.toLocaleString('pt-BR')}</span></div>
-          <div class="kv__row"><span class="kv__key">Caracteres processados</span>
-            <span class="kv__val">${rep.identificacao.caracteresAnalisados.toLocaleString('pt-BR')}</span></div>
-          <div class="kv__row"><span class="kv__key">Data da análise</span>
-            <span class="kv__val">${new Date(rep.geradoEm).toLocaleString('pt-BR')}</span></div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Órgão / Entidade</span>
+          <span class="exec-meta__val">${escapeHtml(meta.orgao || 'Não identificado')}</span>
         </div>
-      </section>
-    </div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Objeto Predominante</span>
+          <span class="exec-meta__val">${escapeHtml(rep.identificacao.objeto)}</span>
+        </div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Valor Estimado</span>
+          <span class="exec-meta__val">${escapeHtml(meta.valor || 'Não informado')}</span>
+        </div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Modalidade</span>
+          <span class="exec-meta__val">${escapeHtml(rep.identificacao.modalidade)}</span>
+        </div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Critério de Julgamento</span>
+          <span class="exec-meta__val">${CRITERIO_LABEL[rep.identificacao.criterio] || rep.identificacao.criterio}</span>
+        </div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Documentos Analisados</span>
+          <span class="exec-meta__val">${rep.identificacao.arquivosAnalisados} arquivo(s) · ${rep.identificacao.linhasAnalisadas.toLocaleString('pt-BR')} linhas</span>
+        </div>
+        <div class="exec-meta__item">
+          <span class="exec-meta__key">Data da Análise</span>
+          <span class="exec-meta__val">${new Date(rep.geradoEm).toLocaleString('pt-BR')}</span>
+        </div>
+      </div>
+    </section>
+  `;
 
+  /* ---------- Restante (checklist e guia de correção) ---------- */
+  const checklistHtml = `
     <section class="card">
       <h3 class="card__title">Checklist de conformidade — Lei 14.133/2021</h3>
       <div class="table-wrap">
@@ -1005,29 +1098,37 @@ function renderReport(rep) {
         </table>
       </div>
     </section>
+  `;
 
-    ${rep.correcoes.length ? `
-      <section class="card">
-        <h3 class="card__title">Guia de correção</h3>
-        <div class="fix-list">
-          ${rep.correcoes.map((f) => `
-            <article class="fix-item" data-severity="${f.severidade}">
-              <header class="fix-item__head">
-                <span class="fix-item__title">${escapeHtml(f.titulo)}</span>
-                <span class="badge ${f.severidade === 'alta' ? 'badge--danger' : 'badge--warn'}">
-                  ${f.severidade === 'alta' ? 'Prioridade alta' : 'Prioridade média'}
-                </span>
-              </header>
-              <p class="fix-item__body">${escapeHtml(f.descricao)}</p>
-              <div class="fix-item__suggest"><strong>Sugestão:</strong> ${escapeHtml(f.sugestao)}</div>
-            </article>
-          `).join('')}
-        </div>
-      </section>
-    ` : ''}
+  const guiaHtml = rep.correcoes.length ? `
+    <section class="card">
+      <h3 class="card__title">Guia de Correção</h3>
+      <div class="fix-list">
+        ${rep.correcoes.map((f) => `
+          <article class="fix-item" data-severity="${f.severidade}">
+            <header class="fix-item__head">
+              <span class="fix-item__title">${escapeHtml(f.titulo)}</span>
+              <span class="badge ${f.severidade === 'alta' ? 'badge--danger' : 'badge--warn'}">
+                ${f.severidade === 'alta' ? 'Prioridade alta' : 'Prioridade média'}
+              </span>
+            </header>
+            <p class="fix-item__body">${escapeHtml(f.descricao)}</p>
+            <div class="fix-item__suggest"><strong>Sugestão:</strong> ${escapeHtml(f.sugestao)}</div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  ` : '';
+
+  const html = `
+    ${dashboardHtml}
+    ${fichaHtml}
+    ${matrizHtml}
+    ${checklistHtml}
+    ${guiaHtml}
 
     <footer class="report-footer">
-      <span>Análise gerada por LicitaAudit · Base normativa: Lei nº 14.133/2021</span>
+      <span>Relatório nº ${escapeHtml(meta.numeroRelatorio || '—')} · LicitaAudit v1.7.0 · Lei nº 14.133/2021</span>
       <span>${rep.checks.length} verificações executadas</span>
     </footer>
   `;
@@ -1035,11 +1136,13 @@ function renderReport(rep) {
   els.report.innerHTML = html;
   els.report.classList.remove('is-hidden');
   els.emptyState.classList.add('is-hidden');
+  els.pdfBtn.disabled   = false;
   els.printBtn.disabled = false;
   els.jsonBtn.disabled  = false;
 
+  /* Animação do gauge */
   requestAnimationFrame(() => {
-    const circle = els.report.querySelector('.status-card__gauge .value');
+    const circle = els.report.querySelector('.score-card__gauge .value');
     if (circle) {
       circle.style.strokeDasharray = `0 ${dashArray}`;
       requestAnimationFrame(() => {
@@ -1054,12 +1157,13 @@ function resetReport() {
   els.report.innerHTML = '';
   els.report.classList.add('is-hidden');
   els.emptyState.classList.remove('is-hidden');
+  els.pdfBtn.disabled   = true;
   els.printBtn.disabled = true;
   els.jsonBtn.disabled  = true;
 }
 
 /* ==========================================================================
- * 10. LISTA DE ARQUIVOS
+ * 11. LISTA DE ARQUIVOS
  * ======================================================================== */
 
 function renderFileList() {
@@ -1094,7 +1198,7 @@ function renderFileList() {
 }
 
 /* ==========================================================================
- * 11. CARREGAMENTO
+ * 12. CARREGAMENTO
  * ======================================================================== */
 
 async function addFiles(fileList) {
@@ -1155,14 +1259,324 @@ function clearAll() {
 }
 
 /* ==========================================================================
- * 12. EXPORTAÇÃO / FEEDBACK / TEMA
+ * 13. EXPORTAÇÃO PDF OFICIAL (pdfMake)
+ * ======================================================================== */
+
+function exportarRelatorioAuditPDF() {
+  const rep = state.report;
+  if (!rep) {
+    toast('Execute a análise antes de exportar o relatório.', 'error');
+    return;
+  }
+  if (!window.pdfMake) {
+    toast('Biblioteca pdfMake não carregada. Verifique a conexão.', 'error');
+    return;
+  }
+
+  const risco       = rep.auditoria?.riscoInfo || classificarRisco(rep.score);
+  const meta        = rep.auditoria || {};
+  const corStatus   = risco.cor;
+  const dataGeracao = new Date(rep.geradoEm || Date.now());
+  const dataFmt     = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const achados = rep.checks.filter((c) => c.status !== 'ok');
+  const achadosBody = achados.length === 0
+    ? [[
+        { text: '—', alignment: 'center', color: '#94a3b8' },
+        { text: 'Nenhuma inconformidade identificada nos documentos analisados.', italics: true, color: '#059669', colSpan: 3 },
+        {}, {}
+      ]]
+    : achados.map((c) => {
+        const sev = c.status === 'danger' ? 'ALTA' : 'MÉDIA';
+        const sevBg = sev === 'ALTA' ? '#fee2e2' : '#fef3c7';
+        const sevFg = sev === 'ALTA' ? '#991b1b' : '#92400e';
+        return [
+          { text: sev, fillColor: sevBg, color: sevFg, bold: true, fontSize: 8, alignment: 'center' },
+          {
+            stack: [
+              { text: c.requisito, bold: true, fontSize: 9 },
+              { text: c.evidencia, fontSize: 8.5, color: '#475569', margin: [0, 2, 0, 0] }
+            ]
+          },
+          { text: c.lei, fontSize: 7.5, color: '#0284c7', italics: true }
+        ];
+      });
+
+  const recomendacoes = rep.correcoes.length
+    ? rep.correcoes.map((f, i) => ({
+        text: `${i + 1}. [${f.severidade.toUpperCase()}] ${f.titulo} — ${f.sugestao}`,
+        fontSize: 9.5,
+        color: '#334155',
+        margin: [0, 0, 0, 6],
+        lineHeight: 1.4
+      }))
+    : [{ text: 'O processo encontra-se em conformidade formal para prosseguimento.', fontSize: 9.5, color: '#059669' }];
+
+  const parecerTexto =
+    rep.statusGeral === 'aprovado'
+      ? 'APROVADO — O processo apresenta conformidade com os requisitos essenciais da Lei nº 14.133/2021, estando apto ao prosseguimento.'
+      : rep.statusGeral === 'requer-correcoes'
+        ? 'APROVADO COM RESSALVAS — Foram identificadas inconsistências que devem ser sanadas antes da publicação do edital.'
+        : 'REJEITADO / DEVOLVIDO PARA SANEAMENTO — Foram identificados vícios relevantes que impedem o prosseguimento do processo.';
+
+  const docDefinition = {
+    pageSize: 'A4',
+    pageMargins: [40, 60, 40, 60],
+    defaultStyle: {
+      font: 'Roboto',
+      fontSize: 10,
+      color: '#1e293b',
+      lineHeight: 1.4
+    },
+
+    header: (currentPage) => {
+      if (currentPage === 1) return null;
+      return {
+        margin: [40, 20, 40, 0],
+        columns: [
+          { text: 'LicitaAudit · Relatório de Auditoria', fontSize: 8, color: '#94a3b8' },
+          { text: meta.orgao || 'Órgão / Entidade Pública', fontSize: 8, color: '#94a3b8', alignment: 'right' }
+        ]
+      };
+    },
+
+    footer: (currentPage, pageCount) => ({
+      margin: [40, 10, 40, 0],
+      columns: [
+        { text: 'Documento gerado eletronicamente pelo sistema LicitaAudit · Lei nº 14.133/2021', fontSize: 7.5, color: '#94a3b8' },
+        { text: `Página ${currentPage} de ${pageCount}`, fontSize: 7.5, color: '#94a3b8', alignment: 'right' }
+      ]
+    }),
+
+    content: [
+      /* =============== CABEÇALHO =============== */
+      {
+        columns: [
+          {
+            width: 55,
+            table: {
+              body: [[{
+                text: 'LA',
+                color: 'white',
+                bold: true,
+                fontSize: 22,
+                alignment: 'center',
+                fillColor: '#1e3a8a',
+                margin: [0, 8, 0, 8]
+              }]]
+            },
+            layout: 'noBorders'
+          },
+          {
+            width: '*',
+            stack: [
+              { text: (meta.orgao || 'ÓRGÃO / ENTIDADE PÚBLICA').toUpperCase(), fontSize: 13, bold: true, color: '#0f172a' },
+              { text: 'SISTEMA LICITAAUDIT — AUDITORIA DE CONFORMIDADE', fontSize: 8.5, color: '#64748b', characterSpacing: 0.5 },
+              { text: 'Base normativa: Lei nº 14.133/2021', fontSize: 8, color: '#94a3b8', italics: true }
+            ],
+            margin: [14, 4, 0, 0]
+          }
+        ]
+      },
+      {
+        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5, lineColor: '#1e3a8a' }],
+        margin: [0, 12, 0, 0]
+      },
+      {
+        text: 'RELATÓRIO TÉCNICO DE AUDITORIA E CONFORMIDADE LICITATÓRIA',
+        fontSize: 12, bold: true, alignment: 'center', color: '#0f172a',
+        margin: [0, 16, 0, 2]
+      },
+      {
+        text: `Nº ${meta.numeroRelatorio || '001/2026'}  ·  ${dataFmt}`,
+        fontSize: 9, alignment: 'center', color: '#64748b',
+        margin: [0, 0, 0, 18]
+      },
+
+      /* =============== FICHA TÉCNICA =============== */
+      {
+        table: {
+          widths: ['32%', '68%'],
+          body: [
+            [{ text: 'Nº do Processo', style: 'metaLabel' }, { text: meta.processo || 'Não identificado', style: 'metaValue' }],
+            [{ text: 'Órgão / Entidade', style: 'metaLabel' }, { text: meta.orgao || 'Não identificado', style: 'metaValue' }],
+            [{ text: 'Objeto Auditado', style: 'metaLabel' }, { text: rep.identificacao.objeto, style: 'metaValue' }],
+            [{ text: 'Valor Estimado', style: 'metaLabel' }, { text: meta.valor || 'Não informado', style: 'metaValue' }],
+            [{ text: 'Modalidade Declarada', style: 'metaLabel' }, { text: rep.identificacao.modalidade, style: 'metaValue' }],
+            [
+              { text: 'Grau de Conformidade', style: 'metaLabel' },
+              {
+                stack: [
+                  { text: `${rep.score}%`, bold: true, fontSize: 12, color: corStatus },
+                  {
+                    canvas: [
+                      { type: 'rect', x: 0, y: 0, w: 200, h: 5, r: 2.5, color: '#e2e8f0' },
+                      { type: 'rect', x: 0, y: 0, w: 200 * rep.score / 100, h: 5, r: 2.5, color: corStatus }
+                    ],
+                    margin: [0, 4, 0, 0]
+                  }
+                ]
+              }
+            ],
+            [
+              { text: 'Nível de Risco', style: 'metaLabel' },
+              { text: risco.nivel, color: corStatus, bold: true, fontSize: 11 }
+            ]
+          ]
+        },
+        layout: {
+          fillColor: (rowIndex) => rowIndex % 2 === 0 ? '#f8fafc' : '#ffffff',
+          hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 1 : 0.5,
+          vLineWidth: () => 0,
+          hLineColor: () => '#e2e8f0',
+          paddingTop: () => 8,
+          paddingBottom: () => 8,
+          paddingLeft: () => 10,
+          paddingRight: () => 10
+        },
+        margin: [0, 0, 0, 18]
+      },
+
+      /* =============== PARECER SINTÉTICO =============== */
+      {
+        table: {
+          widths: ['*'],
+          body: [[{
+            stack: [
+              { text: 'PARECER FINAL DA AUDITORIA', fontSize: 8, bold: true, color: '#64748b', characterSpacing: 0.5 },
+              { text: parecerTexto, fontSize: 11, bold: true, color: corStatus, margin: [0, 4, 0, 4] },
+              { text: risco.descricao, fontSize: 9.5, color: '#334155', italics: true }
+            ],
+            margin: [12, 12, 12, 12],
+            fillColor: risco.nivel === 'ALTO' ? '#fee2e2'
+                     : risco.nivel === 'MÉDIO' ? '#fef3c7'
+                     : '#d1fae5'
+          }]]
+        },
+        layout: 'noBorders',
+        margin: [0, 0, 0, 20]
+      },
+
+      /* =============== CAPÍTULO 1 =============== */
+      { text: '1. RESUMO EXECUTIVO DA ANÁLISE', style: 'sectionTitle' },
+      {
+        text: [
+          'Trata-se de análise automatizada de conformidade realizada sobre ',
+          { text: `${rep.identificacao.arquivosAnalisados} documento(s)`, bold: true },
+          ' integrantes do processo em referência, totalizando ',
+          { text: `${rep.identificacao.linhasAnalisadas.toLocaleString('pt-BR')} linhas`, bold: true },
+          ' processadas pelo motor de regras da Lei nº 14.133/2021. Foram executadas ',
+          { text: `${rep.checks.length} verificações`, bold: true },
+          ', das quais ',
+          { text: `${rep.estatisticas.ok} conformes`, bold: true, color: '#059669' },
+          ', ',
+          { text: `${rep.estatisticas.warn} em atenção`, bold: true, color: '#d97706' },
+          ' e ',
+          { text: `${rep.estatisticas.danger} divergentes`, bold: true, color: '#dc2626' },
+          '.'
+        ],
+        style: 'bodyText'
+      },
+      {
+        text: [
+          'Objeto predominante identificado: ',
+          { text: rep.identificacao.objeto, bold: true },
+          '. Modalidade declarada: ',
+          { text: rep.identificacao.modalidade, bold: true },
+          '. Critério de julgamento: ',
+          { text: rep.identificacao.criterio, bold: true },
+          '.'
+        ],
+        style: 'bodyText'
+      },
+
+      /* =============== CAPÍTULO 2 =============== */
+      { text: '2. QUADRO DEMONSTRATIVO DE ACHADOS E IRREGULARIDADES', style: 'sectionTitle' },
+      {
+        table: {
+          headerRows: 1,
+          dontBreakRows: true,
+          widths: ['10%', '60%', '30%'],
+          body: [
+            [
+              { text: 'GRAU', style: 'tableHeader', alignment: 'center' },
+              { text: 'CONSTATAÇÃO / VÍCIO IDENTIFICADO', style: 'tableHeader' },
+              { text: 'FUNDAMENTO LEGAL', style: 'tableHeader' }
+            ],
+            ...achadosBody
+          ]
+        },
+        layout: {
+          fillColor: (rowIndex) => rowIndex === 0 ? '#1e293b' : null,
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => '#cbd5e1',
+          vLineColor: () => '#cbd5e1',
+          paddingTop: () => 6,
+          paddingBottom: () => 6,
+          paddingLeft: () => 8,
+          paddingRight: () => 8
+        },
+        margin: [0, 0, 0, 20]
+      },
+
+      /* =============== CAPÍTULO 3 =============== */
+      { text: '3. RECOMENDAÇÕES DA AUDITORIA', style: 'sectionTitle' },
+      { stack: recomendacoes, margin: [0, 0, 0, 20] },
+
+      /* =============== ASSINATURA =============== */
+      {
+        table: {
+          dontBreakRows: true,
+          widths: ['*'],
+          body: [[{
+            stack: [
+              { text: ' ', margin: [0, 24, 0, 0] },
+              {
+                canvas: [{ type: 'line', x1: 130, y1: 0, x2: 385, y2: 0, lineWidth: 0.8, lineColor: '#334155' }]
+              },
+              { text: 'Equipe de Auditoria de Controle Interno', fontSize: 10, bold: true, alignment: 'center', margin: [0, 6, 0, 2] },
+              { text: 'Agente de Auditoria · LicitaAudit — Análise Automatizada', fontSize: 9, alignment: 'center', color: '#475569' },
+              { text: meta.orgao || 'Órgão / Entidade Pública', fontSize: 8.5, alignment: 'center', color: '#64748b', italics: true, margin: [0, 2, 0, 0] }
+            ],
+            margin: [0, 10, 0, 10]
+          }]]
+        },
+        layout: 'noBorders',
+        margin: [0, 20, 0, 0]
+      }
+    ],
+
+    styles: {
+      metaLabel:    { fontSize: 8.5, bold: true, color: '#475569' },
+      metaValue:    { fontSize: 9.5, color: '#0f172a' },
+      sectionTitle: { fontSize: 11, bold: true, color: '#0f172a', margin: [0, 14, 0, 8] },
+      bodyText:     { fontSize: 10, color: '#334155', lineHeight: 1.5, margin: [0, 0, 0, 8], alignment: 'justify' },
+      tableHeader:  { fontSize: 8.5, bold: true, color: '#ffffff' }
+    }
+  };
+
+  const procSafe = String(meta.processo || 'LicitaAudit').replace(/[/\\?%*:|"<>]/g, '_');
+  const filename = `Relatorio_Auditoria_${procSafe}_${dataGeracao.getFullYear()}.pdf`;
+
+  try {
+    pdfMake.createPdf(docDefinition).download(filename);
+    toast('Relatório PDF gerado com sucesso.', 'ok');
+  } catch (err) {
+    console.error('[LicitaAudit] Erro ao gerar PDF:', err);
+    toast('Erro ao gerar o PDF. Verifique o console.', 'error');
+  }
+}
+
+/* ==========================================================================
+ * 14. EXPORTAÇÃO JSON / FEEDBACK / TEMA
  * ======================================================================== */
 
 function exportJson() {
   if (!state.report) return;
   const payload = {
     ferramenta: 'LicitaAudit',
-    versao: '1.6.0',
+    versao: '1.7.0',
     baseNormativa: 'Lei nº 14.133/2021',
     ...state.report,
   };
@@ -1208,7 +1622,7 @@ function toggleTheme() {
 }
 
 /* ==========================================================================
- * 13. EVENTOS / BOOTSTRAP
+ * 15. EVENTOS / BOOTSTRAP
  * ======================================================================== */
 
 function bindEvents() {
@@ -1262,6 +1676,7 @@ function bindEvents() {
   });
 
   els.clearBtn.addEventListener('click', clearAll);
+  els.pdfBtn.addEventListener('click', exportarRelatorioAuditPDF);
   els.printBtn.addEventListener('click', () => window.print());
   els.jsonBtn.addEventListener('click', exportJson);
   els.themeToggle.addEventListener('click', toggleTheme);
@@ -1282,7 +1697,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#5b8cff;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v1.6.0 · Lei 14.133/2021 · objeto resiliente a Markdown'
+    '· v1.7.0 · Lei 14.133/2021 · Dashboard + PDF + JSON'
   );
 }
 
