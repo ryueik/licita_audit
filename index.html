@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
-  <meta name="description" content="Auditoria de conformidade para processos licitatórios — matriz dinâmica cobrindo todas as modalidades, naturezas e critérios da Lei nº 14.133/2021." />
+  <meta name="description" content="Auditoria híbrida de processos licitatórios — matriz dinâmica, integração LicitaReq, notas do auditor e PDFs executivos." />
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
 
@@ -37,17 +37,14 @@
 
       <section class="panel">
         <button id="btnNovoProcesso" class="btn btn--primary btn--block" type="button">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M12 5v14m-7-7h14" stroke-linecap="round" />
-          </svg>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14m-7-7h14" stroke-linecap="round" /></svg>
           Novo Processo
         </button>
         <button id="btnCarregarExemplo" class="btn btn--ghost btn--block" type="button">Carregar Exemplo</button>
       </section>
 
       <section class="panel">
-        <h2 class="panel__title">Perfil da Licitação</h2>
-
+        <h2 class="panel__title">Perfil Padrão</h2>
         <label class="field">
           <span class="field__label">Modalidade (Art. 28)</span>
           <select id="paramModalidade" class="select">
@@ -57,11 +54,10 @@
             <option value="concurso">Concurso (Art. 30)</option>
             <option value="leilao">Leilão (Art. 31)</option>
             <option value="dialogo">Diálogo Competitivo (Art. 32)</option>
-            <option value="dispensa">Dispensa de Licitação (Art. 75)</option>
+            <option value="dispensa">Dispensa (Art. 75)</option>
             <option value="inexigibilidade">Inexigibilidade (Art. 74)</option>
           </select>
         </label>
-
         <label class="field">
           <span class="field__label">Natureza do Objeto (Art. 6º)</span>
           <select id="paramObjeto" class="select">
@@ -71,10 +67,9 @@
             <option value="servicos-especiais">Serviços especiais</option>
             <option value="obras">Obras e serviços de engenharia</option>
             <option value="intelectual">Serviços técnicos intelectuais</option>
-            <option value="alienacao">Alienação de bens / Concessão</option>
+            <option value="alienacao">Alienação / Concessão</option>
           </select>
         </label>
-
         <label class="field">
           <span class="field__label">Critério de Julgamento (Art. 33)</span>
           <select id="paramCriterio" class="select">
@@ -87,6 +82,9 @@
             <option value="maior-retorno">Maior retorno econômico</option>
           </select>
         </label>
+        <p style="font-size:10.5px; color:var(--text-dim); margin-top:8px; line-height:1.5;">
+          Aplica-se a <strong>todos</strong> os processos abertos. Cada processo pode sobrescrever esses valores individualmente.
+        </p>
       </section>
 
       <section class="panel">
@@ -98,7 +96,7 @@
       </section>
 
       <p class="disclaimer">
-        <strong>Aviso orientativo.</strong> Os percentuais de conformidade têm caráter indicativo e servem para localizar requisitos indispensáveis da instrução processual. A conferência humana dos autos permanece obrigatória.
+        <strong>Aviso orientativo.</strong> Os percentuais têm caráter indicativo e servem para localizar requisitos indispensáveis. A conferência humana dos autos permanece obrigatória.
       </p>
     </aside>
 
@@ -106,9 +104,7 @@
       <header class="topbar">
         <div class="topbar__left">
           <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" />
-            </svg>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" /></svg>
           </button>
           <div class="topbar__title">
             <h2>Painel de Auditoria</h2>
@@ -116,13 +112,8 @@
           </div>
         </div>
         <button id="themeToggle" class="icon-btn" type="button" aria-label="Alternar tema" title="Alternar tema">
-          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round" />
-          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round" /></svg>
         </button>
       </header>
 
@@ -130,12 +121,10 @@
 
       <section id="emptyState" class="empty-state">
         <div class="empty-state__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4">
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke-linejoin="round" />
-          </svg>
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke-linejoin="round" /></svg>
         </div>
         <h3>Comece criando um Processo</h3>
-        <p>Organize múltiplos documentos por processo, atribua cores e tags, e audite individualmente ou de forma consolidada em todas as combinações possíveis da Lei nº 14.133/2021.</p>
+        <p>Organize múltiplos documentos, anexe arquivos do <strong>LicitaReq</strong>, atribua metadados, registre notas e audite qualquer combinação de modalidade × natureza × critério prevista na Lei nº 14.133/2021.</p>
         <button class="btn btn--primary" id="btnNovoProcessoEmpty" type="button">+ Criar Primeiro Processo</button>
       </section>
 
@@ -143,6 +132,7 @@
     </main>
   </div>
 
+  <!-- Modal genérico (detalhes de arquivo e outras ações) -->
   <div id="modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
     <div class="modal__overlay" data-close-modal></div>
     <div class="modal__box">
@@ -151,6 +141,18 @@
         <button class="modal__close" type="button" data-close-modal aria-label="Fechar">&times;</button>
       </header>
       <div id="modalBody" class="modal__body"></div>
+    </div>
+  </div>
+
+  <!-- Modal de Critérios Ativos -->
+  <div id="modalCriterios" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalCriteriosTitulo">
+    <div class="modal__overlay" data-close-modal-crit></div>
+    <div class="modal__box modal__box--wide">
+      <header class="modal__head">
+        <h3 id="modalCriteriosTitulo">Critérios Ativos</h3>
+        <button class="modal__close" type="button" data-close-modal-crit aria-label="Fechar">&times;</button>
+      </header>
+      <div id="modalCriteriosBody" class="modal__body"></div>
     </div>
   </div>
 
