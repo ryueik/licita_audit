@@ -1,10 +1,9 @@
 /* ============================================================================
- * LicitaAudit · app.js — v6.5
+ * LicitaAudit · app.js — v6.6
  * ----------------------------------------------------------------------------
- * • Anti-Overflow Global Fix · Sidebar mobile com overlay
- * • Workspaces por processo · Core Engine de 30 verificações condicionais
- * • Painel de Auditoria responsivo (grid de blocos, cards, tabela adaptativa)
- * • PDF institucional (5 blocos editoriais) com pdfMake
+ * • Parser radical-based de processo/objeto (abrangente e tolerante)
+ * • Motor de regras com aplicabilidade condicional (B2_05, B3_01, B3_03, B3_04)
+ * • Relatório PDF corporativo (pdfMake) — design editorial executivo
  * ========================================================================== */
 'use strict';
 
@@ -119,7 +118,7 @@ const firstMatch = (text, rx) => {
 };
 
 /* ==========================================================================
- * 4. PARSER DE TEXTO
+ * 4. PARSER DE TEXTO — RADICAL-BASED E ABRANGENTE
  * ======================================================================== */
 function extrairModalidade(corpus) {
   const rot = corpus.match(/(?:modalidade\s+(?:de\s+licita[cç][aã]o|licitat[oó]ria|adotada|declarada)|tipo\s+de\s+licita[cç][aã]o)\s*[:\-–—]\s*([^\n\r]{2,80})/i);
@@ -163,18 +162,36 @@ function extrairObjeto(corpus) {
   const texto = (m[1] || m[2] || '').replace(/^[\s\-–—:.,;]+/, '').replace(/\s+/g, ' ').trim().slice(0, 600);
   return { texto, tipo: classificarObjeto(texto) };
 }
+
+/* ---------- NOVO: parser radical-based de processo ---------- */
+function extrairProcesso(corpus) {
+  // 1) Tentativa radical abrangente — aceita "processo", "PA", "PRT", "protocolo", "unitau" etc.
+  const rx = /(processo|pa|prt|protocolo|unitau|edital|memorando|of[íi]cio)[\s\wºnº\.:\/-]*?(\d{3,}[\d\/\.\-]+)/i;
+  const m = corpus.match(rx);
+  if (m && m[2]) {
+    const rotulo = m[1].trim();
+    const numero = m[2].trim();
+    const formatado = `${rotulo.charAt(0).toUpperCase() + rotulo.slice(1).toLowerCase()} ${numero}`;
+    return formatado.replace(/\s+/g, ' ').slice(0, 80);
+  }
+
+  // 2) Fallback: qualquer sequência longa de números com barra/pontos
+  const fb = corpus.match(/\b(\d{2,}[\.\/]\d{2,}[\.\/\-\d]*)\b/);
+  if (fb) return fb[1];
+
+  return 'Não identificado';
+}
+
 function extrairValor(corpus) {
   const m = corpus.match(/R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i);
   return m ? parseValorBR(m[1]) : 0;
 }
-function extrairProcesso(corpus) {
-  const m = corpus.match(/(?:processo\s+administrativo|processo|edital|memorando|of[íi]cio)\s*(?:n[º°.]?|n[uú]mero)?\s*([\d][\d.\/\-\w]{3,40})/i);
-  return m ? m[0].replace(/\s+/g, ' ').trim() : 'Não identificado';
-}
+
 function extrairOrgao(corpus) {
-  const m = corpus.match(/\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Secretaria|Funda[cç][aã]o|Autarquia)[^\n,.;]{0,80}/i);
+  const m = corpus.match(/\b(Minist[ée]rio|Prefeitura(?:\s+Municipal)?|Tribunal|Universidade|Instituto|C[âa]mara(?:\s+Municipal)?|Secretaria|Funda[cç][aã]o|Autarquia|Departamento|Coordenadoria)[^\n,.;]{0,80}/i);
   return m ? m[0].replace(/\s+/g, ' ').trim() : 'ÓRGÃO / ENTIDADE PÚBLICA';
 }
+
 function extrairCriterio(corpus) {
   const m = {
     'menor-preco':    /\bmenor\s+pre[cç]o\b/i,
@@ -187,6 +204,7 @@ function extrairCriterio(corpus) {
   for (const [k, rx] of Object.entries(m)) if (rx.test(corpus)) return k;
   return 'indefinido';
 }
+
 function classificarNatureza(corpus, forcar = 'auto') {
   if (forcar && forcar !== 'auto') {
     const mapa = {
@@ -206,16 +224,29 @@ function classificarNatureza(corpus, forcar = 'auto') {
   if (KB.comuns.test(t))         return 'Bens e serviços comuns';
   return 'Bens e serviços comuns';
 }
+
 function classificarTipoObjeto(meta) {
   const texto = [meta?.objeto?.texto || '', meta?.objetoField || ''].join(' ').toLowerCase();
   const nat   = (meta?.natureza || '').toLowerCase();
-  const eBens = /(aquisi[cç][aã]o\s+de\s+bens|compra\s+de\s+bens|fornecimento\s+de\s+bens|equipament|material\s+de|computador(es)?|notebook(s)?|workstation(s)?|desktop(s)?|monitor(es)?|impressora(s)?|scanner(es)?|mobili[aá]rio|cadeira(s)?|mesa(s)?|arm[aá]rio(s)?|estante(s)?|ve[ií]culo(s)?|uniforme(s)?|medicament(o|os))/i.test(texto);
+  const eBens = /(aquisi[cç][aã]o\s+de\s+bens|compra\s+de\s+bens|fornecimento\s+de\s+bens|equipament|material\s+de|computador(es)?|notebook(s)?|workstation(s)?|desktop(s)?|monitor(es)?|impressora(s)?|scanner(es)?|mobili[aá]rio|cadeira(s)?|mesa(s)?|arm[aá]rio(s)?|estante(s)?|ve[ií]culo(s)?|uniforme(s)?|medicament(o|os)|reativo|insumo|material)/i.test(texto);
   const eServicos = /(presta[cç][aã]o\s+de\s+servi|contrata[cç][aã]o\s+de\s+servi|servi[cç]os?\s+de|servi[cç]o\s+(t[eé]cnico|especializado|continuado)|manuten[cç][aã]o|suporte\s+t[eé]cnico|consultoria|assessoria|treinamento|capacita[cç][aã]o|limpeza|vigil[aâ]ncia|seguran[cç]a)/i.test(texto);
   if (eBens && !eServicos) return 'bens';
   if (eServicos && !eBens) return 'servicos';
   if (/aquisic|bens/.test(nat)) return 'bens';
   if (/servic/.test(nat))       return 'servicos';
   return 'servicos';
+}
+
+/* ---------- Detecção de objeto de engenharia (para B2_05) ---------- */
+function ehObjetoEngenharia(meta, natureza, corpus) {
+  const blob = [
+    meta?.objeto?.texto || '',
+    meta?.objeto?.tipo || '',
+    natureza || '',
+  ].join(' ');
+  if (/(obra|engenharia|reforma|constru[cç][aã]o|pavimenta)/i.test(blob)) return true;
+  // fallback: varre o corpus por termos técnicos de engenharia
+  return /(obra\s+p[uú]blica|servi[cç]os?\s+de\s+engenharia|reforma\s+predial|pavimenta[cç][aã]o\s+asf[aá]ltica|constru[cç][aã]o\s+civil)/i.test(corpus);
 }
 
 /* ==========================================================================
@@ -235,7 +266,7 @@ const MATRIZ_CORE_30 = [
   { id:'B1_02', bloco:1, nome:'Descrição clara e precisa do objeto', fundamento:'Art. 18, §1º, II', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
       const tipo = c.meta.objeto.tipo || '';
       const texto = (c.meta.objeto.texto || '').toLowerCase();
-      const chave = /(computador|notebook|workstation|equipament|licen[cç]a|suporte\s+t[eé]cnico|impressora|monitor|servidor|switch|roteador|software|sistema|aquisi[cç][aã]o|fornecimento|presta[cç][aã]o\s+de\s+servi|bem|material|servi[çc]o)/i.test(c.corpus);
+      const chave = /(computador|notebook|workstation|equipament|licen[cç]a|suporte\s+t[eé]cnico|impressora|monitor|servidor|switch|roteador|software|sistema|aquisi[cç][aã]o|fornecimento|presta[cç][aã]o\s+de\s+servi|bem|material|servi[çc]o|reativo|insumo)/i.test(c.corpus);
       return tipo !== 'Não identificado' || (texto.length > 20 && chave) || chave;
     }, mensagemFalha:'Objeto insuficiente ou ambíguo.', recomendacao:'Descrever com especificações técnicas precisas.' },
   { id:'B1_03', bloco:1, nome:'Estimativa de quantitativos', fundamento:'Art. 18, §1º, III', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(quantidade|qtd\.?|unidades?|\blotes?\b|\d+\s*\([^)]{2,60}\)|\d+\s*(unid|un|pç|pc|cx|kg|l|m²|m³|resma|itens?))/i.test(c.corpus), mensagemFalha:'Quantitativos não explicitados.', recomendacao:'Apresentar planilha quantitativa com metodologia.' },
@@ -251,18 +282,44 @@ const MATRIZ_CORE_30 = [
       if (!c.meta.valor || c.meta.valor <= 0) return false;
       return c.meta.valor <= lim;
     }, mensagemFalha:'Valor acima do teto para dispensa.', recomendacao:'Reclassificar modalidade ou revisar valor.' },
-  { id:'B2_05', bloco:2, nome:'Referência SINAPI/SICRO (obras)', fundamento:'Art. 23, §2º', severidade:'MEDIA', aplicavel:c=>/obras?\s+e\s+servi[cç]os\s+de\s+engenharia/i.test(c.natureza || ''), test:c=>/(SINAPI|SICRO|tabela\s+de\s+refer[eê]ncia)/i.test(c.corpus), mensagemFalha:'Sem referência SINAPI/SICRO.', recomendacao:'Comprovar compatibilidade com SINAPI/SICRO.' },
 
-  { id:'B3_01', bloco:3, nome:'Ausência de direcionamento de marca', fundamento:'Art. 41, I', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
-      const v = /(vedad[ao]\s+(a\s+)?indica[cç][aã]o\s+de\s+marca|vedad[ao]\s+(a\s+)?marca|sem\s+indica[cç][aã]o\s+de\s+marca|vedad[ao]\s+indica[cç][aã]o\s+de\s+marca\s*,?\s*modelo|n[aã]o\s+ser[aá]\s+admitid[ao]\s+(a\s+)?indica[cç][aã]o\s+de\s+marca)/i.test(c.corpus);
-      if (v) return true;
-      const m = /\b(marca|modelo|fabricante)\s*[:\-]?\s*[A-ZÀ-Ú][\w-]+/i.test(c.corpus);
-      if (!m) return true;
-      return /(padroniza|carta\s+de\s+exclusividade|atestado\s+de\s+exclusividade|justificativa\s+t[eé]cnica\s+de\s+padroniza)/i.test(c.corpus);
-    }, mensagemFalha:'Indicação de marca sem justificativa.', recomendacao:'Inserir cláusula de vedação OU justificativa de padronização.' },
-  { id:'B3_02', bloco:3, nome:'Vedação de participação de servidores', fundamento:'Art. 14, I', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(servidores?\s+do\s+[óo]rg[ãa]o|membros?\s+da\s+comiss[aã]o|art\.?\s*14,?\s*i\b|v[eé]dad[ao]\s+ao\s+servidor|impedimento\s+de\s+servidor)/i.test(c.corpus), mensagemFalha:'Sem cláusula de vedação a servidores.', recomendacao:'Incluir cláusula vedando participação de servidores (Art. 14, I).' },
-  { id:'B3_03', bloco:3, nome:'Vedação a empresas suspensas', fundamento:'Art. 14, III', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(impedid[oa]|suspens[ao]|CEIS|CNEP|consulta\s+de\s+san[cç][õo]es)/i.test(c.corpus), mensagemFalha:'Sem vedação a empresas impedidas.', recomendacao:'Explicitar vedação e consulta CEIS/CNEP.' },
-  { id:'B3_04', bloco:3, nome:'Declaração sobre trabalho infantil', fundamento:'Art. 68, VI', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(n[aã]o\s+emprego\s+de\s+menores|trabalho\s+infantil|menor\s+de\s+18)/i.test(c.corpus), mensagemFalha:'Sem declaração sobre trabalho infantil.', recomendacao:'Exigir declaração de não emprego de menores.' },
+  /* ---------- B2_05 — APLICABILIDADE CONDICIONAL (engenharia apenas) ---------- */
+  { id:'B2_05', bloco:2, nome:'Referência SINAPI/SICRO (obras)', fundamento:'Art. 23, §2º', severidade:'MEDIA',
+    aplicavel: c => ehObjetoEngenharia(c.meta, c.natureza, c.corpus),
+    test: c => /(SINAPI|SICRO|tabela\s+de\s+refer[eê]ncia|composi[cç][aã]o\s+de\s+custos|or[cç]amento\s+referencial)/i.test(c.corpus),
+    mensagemFalha:'Sem referência SINAPI/SICRO.', recomendacao:'Comprovar compatibilidade com SINAPI/SICRO.' },
+
+  /* ---------- B3_01 — MARCA (radical-based, ampla) ---------- */
+  { id:'B3_01', bloco:3, nome:'Ausência de direcionamento de marca', fundamento:'Art. 41, I', severidade:'CRITICA',
+    aplicavel:()=>true,
+    test:c=>{
+      const vedacaoA = /(vedad[ao]|proibid[ao]|sem|aus[êe]ncia)\s+.{0,80}?\b(marca|modelo|fabricante)\b/i.test(c.corpus);
+      const vedacaoB = /(marca\s+exclusiva|indica[cç][aã]o\s+de\s+marca).{0,80}?\b(vedad[ao]|proibid[ao])/i.test(c.corpus);
+      if (vedacaoA || vedacaoB) return true;
+      // se cita marca específica, exige justificativa técnica de padronização
+      const temMarcaEspecifica = /\b(marca|modelo|fabricante)\s*[:\-]\s*[A-ZÀ-Ú][\w-]{1,30}/i.test(c.corpus);
+      if (!temMarcaEspecifica) return true;
+      return /(padroniza|carta\s+de\s+exclusividade|atestado\s+de\s+exclusividade|justificativa\s+t[eé]cnica\s+de\s+padroniza|art\.?\s*41\s*,?\s*i\b)/i.test(c.corpus);
+    },
+    mensagemFalha:'Indicação de marca sem justificativa.',
+    recomendacao:'Inserir cláusula de vedação OU justificativa de padronização (Art. 41, I).' },
+
+  { id:'B3_02', bloco:3, nome:'Vedação de participação de servidores', fundamento:'Art. 14, I', severidade:'MEDIA', aplicavel:()=>true, test:c=>/(servidores?\s+do\s+[óo]rg[ãa]o|membros?\s+da\s+comiss[aã]o|art\.?\s*14,?\s*i\b|v[eé]dad[ao]\s+ao\s+servidor|impedimento\s+de\s+servidor|agente\s+p[uú]blico)/i.test(c.corpus), mensagemFalha:'Sem cláusula de vedação a servidores.', recomendacao:'Incluir cláusula vedando participação de servidores (Art. 14, I).' },
+
+  /* ---------- B3_03 — CEIS/CNEP (radical-based) ---------- */
+  { id:'B3_03', bloco:3, nome:'Vedação a empresas suspensas', fundamento:'Art. 14, III', severidade:'MEDIA',
+    aplicavel:()=>true,
+    test:c=>/(\bceis\b|\bcnep\b|suspen[sa][oa]?|impedid[ao]|sancionad[ao]|inid[ôo]ne[ao]|art\.?\s*14)/i.test(c.corpus),
+    mensagemFalha:'Sem vedação a empresas impedidas.',
+    recomendacao:'Explicitar vedação e consulta CEIS/CNEP (Art. 14, III).' },
+
+  /* ---------- B3_04 — TRABALHO INFANTIL (radical-based) ---------- */
+  { id:'B3_04', bloco:3, nome:'Declaração sobre trabalho infantil', fundamento:'Art. 68, VI', severidade:'MEDIA',
+    aplicavel:()=>true,
+    test:c=>/(infantil|menor(?:es)?\s+de\s+18|trabalho\s+noturno|perigoso|insalubre|art\.?\s*68|n[aã]o\s+emprego\s+de\s+menores)/i.test(c.corpus),
+    mensagemFalha:'Sem declaração sobre trabalho infantil.',
+    recomendacao:'Exigir declaração de não emprego de menores (Art. 68, VI).' },
+
   { id:'B3_05', bloco:3, nome:'Qualificação técnica e vistoria', fundamento:'Art. 67 · Art. 63, § único', severidade:'MEDIA', aplicavel:()=>true, test:c=>{
       if (/(exig[êe]ncia\s+excessiva|desproporcional|afunilad[ao])/i.test(c.corpus)) return false;
       const v = /(vistoria|visita\s+t[eé]cnica)/i.test(c.corpus);
@@ -274,7 +331,7 @@ const MATRIZ_CORE_30 = [
       const mod = (c.modalidade?.modalidade || '').toLowerCase();
       const nat = (c.natureza || '').toLowerCase();
       const obj = ((c.meta?.objeto?.texto || '') + ' ' + (c.meta?.objeto?.tipo || '')).toLowerCase();
-      if (mod.includes('pregão')) return /bens|comuns|servi[cç]|aquisi[cç]|fornecimento|ti\b|tic\b|tecnologia\s+da\s+informa|equipament|computador|notebook|workstation|impressora|monitor|material|mobili/.test(nat) || /bens|comuns|ti\b|tic\b|equipament|computador|notebook|workstation|impressora|monitor|material|mobili|software|hardware/.test(obj);
+      if (mod.includes('pregão')) return /bens|comuns|servi[cç]|aquisi[cç]|fornecimento|ti\b|tic\b|tecnologia\s+da\s+informa|equipament|computador|notebook|workstation|impressora|monitor|material|mobili|reativo|insumo/.test(nat) || /bens|comuns|ti\b|tic\b|equipament|computador|notebook|workstation|impressora|monitor|material|mobili|software|hardware|reativo|insumo/.test(obj);
       if (mod.includes('concorrência')) return /obra|engenharia|t[eé]cnic|tic|intelectual|especializ|complexid/.test(nat) || /obra|engenharia|t[eé]cnic|intelectual|especializ|complexid/.test(obj);
       if (mod.includes('leilão')) return /aliena|inserv[íi]vel|desfazimento/.test(nat) || /aliena|inserv[íi]vel|desfazimento/.test(obj);
       return true;
@@ -371,7 +428,6 @@ function calcularRiscoProcesso(arquivos) {
   if (ok.some(a => a.risco === 'MÉDIO')) return 'MÉDIO';
   return 'BAIXO';
 }
-
 function agregarPorBloco(arquivos) {
   const agg = {};
   for (let b = 1; b <= 6; b++) {
@@ -384,118 +440,21 @@ function agregarPorBloco(arquivos) {
         const b = r.bloco;
         if (!agg[b]) return;
         agg[b].total++;
-        if (r.conforme) {
-          agg[b].ok++;
-        } else {
+        if (r.conforme) agg[b].ok++;
+        else {
           agg[b].falha++;
-          if (r.severidade === 'CRITICA')      agg[b].criticas++;
-          else if (r.severidade === 'MEDIA')   agg[b].medias++;
-          else                                 agg[b].baixas++;
+          if (r.severidade === 'CRITICA') agg[b].criticas++;
+          else if (r.severidade === 'MEDIA') agg[b].medias++;
+          else agg[b].baixas++;
         }
       });
     });
   return agg;
 }
-
 function nivelConformidade(pct) {
   if (pct >= 90) return 'baixo';
   if (pct >= 70) return 'medio';
   return 'alto';
-}
-
-function renderBlocoCard(num, dados) {
-  const pct = dados.total > 0 ? Math.round((dados.ok / dados.total) * 100) : 100;
-  const nivel = nivelConformidade(pct);
-  return `
-    <article class="bloco-card" data-bloco="${num}">
-      <header class="bloco-card__head">
-        <span class="bloco-card__num">B${num}</span>
-        <h4 class="bloco-card__titulo" title="${escapeHtml(dados.titulo)}">
-          ${escapeHtml(dados.titulo)}
-        </h4>
-        <span class="bloco-card__pct">${pct}%</span>
-      </header>
-
-      <div class="bloco-card__progress" role="progressbar"
-           aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
-        <div class="bloco-card__progress-bar"
-             data-nivel="${nivel}" style="width:${pct}%;"></div>
-      </div>
-
-      <footer class="bloco-card__foot">
-        <span class="chip chip--ok">✓ ${dados.ok}/${dados.total}</span>
-        ${dados.criticas ? `<span class="chip chip--danger">● ${dados.criticas} crítica${dados.criticas>1?'s':''}</span>` : ''}
-        ${dados.medias   ? `<span class="chip chip--warn">● ${dados.medias} média${dados.medias>1?'s':''}</span>`   : ''}
-        ${(!dados.criticas && !dados.medias && dados.baixas)
-          ? `<span class="chip">● ${dados.baixas} baixa${dados.baixas>1?'s':''}</span>` : ''}
-      </footer>
-    </article>
-  `;
-}
-
-function renderAchadosConsolidados(arquivos) {
-  const todos = [];
-  arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados))
-    .forEach(a => {
-      a.resultados.filter(r => r.aplicavel && !r.conforme).forEach(r => {
-        todos.push({
-          arquivo: a.nomeArquivo,
-          id: r.id, bloco: r.bloco, nome: r.nome,
-          fundamento: r.fundamento,
-          severidade: r.severidade,
-          mensagem: r.mensagemFalha,
-          recomendacao: r.recomendacao,
-        });
-      });
-    });
-
-  const ordem = { CRITICA: 0, MEDIA: 1, BAIXA: 2 };
-  todos.sort((a, b) => (ordem[a.severidade] - ordem[b.severidade]) || (a.bloco - b.bloco));
-
-  if (!todos.length) {
-    return `<p style="padding:1.1rem 1.25rem;color:var(--ok);font-size:13px;font-weight:600;">
-      ✓ Nenhuma inconformidade identificada no processo.
-    </p>`;
-  }
-
-  const linhas = todos.map(t => {
-    const sev = t.severidade === 'CRITICA' ? 'alto'
-              : t.severidade === 'MEDIA'   ? 'medio' : 'baixo';
-    const sevLabel = t.severidade === 'CRITICA' ? 'Crítica'
-                   : t.severidade === 'MEDIA'   ? 'Média' : 'Baixa';
-    return `
-      <tr>
-        <td data-label="Grau">
-          <span class="badge badge--${sev}">${sevLabel}</span>
-        </td>
-        <td data-label="Bloco"><strong>B${t.bloco}</strong> · ${escapeHtml(t.nome)}</td>
-        <td data-label="Arquivo" class="texto-recortado" title="${escapeHtml(t.arquivo)}">
-          ${escapeHtml(truncate(t.arquivo, 30))}
-        </td>
-        <td data-label="Fundamento" class="texto-longo-quebra">
-          <em style="color:var(--brand);font-family:var(--font-mono);font-size:11px;">
-            ${escapeHtml(t.fundamento)}
-          </em>
-        </td>
-      </tr>
-    `;
-  }).join('');
-
-  return `
-    <div class="tabela-responsive-wrapper">
-      <table class="tabela-arquivos tabela-auditoria">
-        <thead>
-          <tr>
-            <th style="width:12%;">Grau</th>
-            <th style="width:28%;">Bloco / Verificação</th>
-            <th style="width:22%;">Arquivo</th>
-            <th style="width:38%;">Fundamento Legal</th>
-          </tr>
-        </thead>
-        <tbody>${linhas}</tbody>
-      </table>
-    </div>
-  `;
 }
 
 /* ==========================================================================
@@ -528,13 +487,7 @@ function analisarTextoIndividual(corpus, opts = {}) {
     : extrairCriterio(corpus);
 
   const tipoObjeto = classificarTipoObjeto({ objeto: metaBase.objeto, natureza: naturezaBase });
-  const meta = {
-    ...metaBase,
-    natureza: naturezaBase,
-    modalidade: modalidadeLabel,
-    criterio,
-    tipoObjeto,
-  };
+  const meta = { ...metaBase, natureza: naturezaBase, modalidade: modalidadeLabel, criterio, tipoObjeto };
 
   const auditoria = executarAuditoriaArquivo(corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio);
 
@@ -574,8 +527,7 @@ function analisarTextoIndividual(corpus, opts = {}) {
     correcoes: auditoria.aplicaveis.filter(r => !r.conforme).map(r => ({
       id: r.id, bloco: r.bloco, titulo: r.nome, lei: r.fundamento,
       severidade: r.severidade === 'CRITICA' ? 'alta' : r.severidade === 'MEDIA' ? 'media' : 'baixa',
-      descricao: r.mensagemFalha,
-      sugestao: r.recomendacao,
+      descricao: r.mensagemFalha, sugestao: r.recomendacao,
     })),
   };
 }
@@ -634,9 +586,7 @@ function criarProcesso(nome) {
     id: uid('proc'),
     nome: nome || `Processo ${state.processos.length + 1}`,
     cor: CORES_PRESET[state.processos.length % CORES_PRESET.length],
-    tags: [],
-    arquivos: [],
-    criadoEm: new Date().toISOString(),
+    tags: [], arquivos: [], criadoEm: new Date().toISOString(),
   };
   state.processos.push(proc);
   state.ativo = proc.id;
@@ -650,9 +600,7 @@ function excluirProcesso(procId) {
   renderTudo();
   toast('Processo excluído.', 'ok');
 }
-function getProcessoAtivo() {
-  return state.processos.find(p => p.id === state.ativo) || null;
-}
+function getProcessoAtivo() { return state.processos.find(p => p.id === state.ativo) || null; }
 
 /* ==========================================================================
  * 10. ADIÇÃO DE ARQUIVOS
@@ -670,14 +618,8 @@ async function adicionarArquivos(procId, fileList) {
 
   for (const file of files) {
     const entry = {
-      id: uid('arq'),
-      nomeArquivo: file.name,
-      ext: extOf(file.name),
-      tamanho: file.size,
-      texto: '',
-      status: 'loading',
-      erro: null,
-      _ref: file,
+      id: uid('arq'), nomeArquivo: file.name, ext: extOf(file.name),
+      tamanho: file.size, texto: '', status: 'loading', erro: null, _ref: file,
     };
     p.arquivos.push(entry);
     renderWorkspace();
@@ -710,10 +652,7 @@ function removerArquivo(procId, arqId) {
  * 11. RENDERIZAÇÃO
  * ======================================================================== */
 function renderTudo() {
-  renderTabs();
-  renderEmptyOuWorkspace();
-  renderSubtitle();
-  renderBotoesExportacao();
+  renderTabs(); renderEmptyOuWorkspace(); renderSubtitle(); renderBotoesExportacao();
 }
 function renderSubtitle() {
   const total = state.processos.length;
@@ -721,8 +660,7 @@ function renderSubtitle() {
   els.subtitle.textContent = total === 0 ? 'Nenhum processo criado' : `${total} processo(s) · ${totalArq} arquivo(s)`;
 }
 function renderBotoesExportacao() {
-  const temAlgo = state.processos.some(p => p.arquivos.length > 0);
-  els.pdfAllBtn.disabled = !temAlgo;
+  els.pdfAllBtn.disabled = !state.processos.some(p => p.arquivos.length > 0);
 }
 function renderEmptyOuWorkspace() {
   if (!state.processos.length) {
@@ -750,24 +688,79 @@ function renderTabs() {
               style="border-left-color:${borderLeftColor};">
         <span class="tab__dot" style="background:${dotColor};"></span>
         ${escapeHtml(truncate(p.nome, 24))}
-      </button>
-    `;
+      </button>`;
   }).join('');
 
   const btnNovo = `
     <button class="tab tab--add" data-novo-processo type="button" title="Criar novo processo">
-      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-        <path d="M12 5v14m-7-7h14" stroke-linecap="round" />
-      </svg>
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14m-7-7h14" stroke-linecap="round" /></svg>
       Criar Processo
-    </button>
-  `;
+    </button>`;
 
   els.tabsProcessos.innerHTML = tabs + btnNovo;
   $$('[data-tab-proc]').forEach(btn => {
     btn.addEventListener('click', () => { state.ativo = btn.dataset.tabProc; renderTudo(); });
   });
   $('[data-novo-processo]')?.addEventListener('click', () => criarProcesso());
+}
+
+function renderBlocoCard(num, dados) {
+  const pct = dados.total > 0 ? Math.round((dados.ok / dados.total) * 100) : 100;
+  const nivel = nivelConformidade(pct);
+  return `
+    <article class="bloco-card" data-bloco="${num}">
+      <header class="bloco-card__head">
+        <span class="bloco-card__num">B${num}</span>
+        <h4 class="bloco-card__titulo" title="${escapeHtml(dados.titulo)}">${escapeHtml(dados.titulo)}</h4>
+        <span class="bloco-card__pct">${pct}%</span>
+      </header>
+      <div class="bloco-card__progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+        <div class="bloco-card__progress-bar" data-nivel="${nivel}" style="width:${pct}%;"></div>
+      </div>
+      <footer class="bloco-card__foot">
+        <span class="chip chip--ok">✓ ${dados.ok}/${dados.total}</span>
+        ${dados.criticas ? `<span class="chip chip--danger">● ${dados.criticas} crítica${dados.criticas>1?'s':''}</span>` : ''}
+        ${dados.medias   ? `<span class="chip chip--warn">● ${dados.medias} média${dados.medias>1?'s':''}</span>`   : ''}
+        ${(!dados.criticas && !dados.medias && dados.baixas) ? `<span class="chip">● ${dados.baixas} baixa${dados.baixas>1?'s':''}</span>` : ''}
+      </footer>
+    </article>`;
+}
+
+function renderAchadosConsolidados(arquivos) {
+  const todos = [];
+  arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados)).forEach(a => {
+    a.resultados.filter(r => r.aplicavel && !r.conforme).forEach(r => {
+      todos.push({ arquivo: a.nomeArquivo, id: r.id, bloco: r.bloco, nome: r.nome, fundamento: r.fundamento, severidade: r.severidade });
+    });
+  });
+  const ordem = { CRITICA: 0, MEDIA: 1, BAIXA: 2 };
+  todos.sort((a, b) => (ordem[a.severidade] - ordem[b.severidade]) || (a.bloco - b.bloco));
+
+  if (!todos.length) {
+    return `<p style="padding:1.1rem 1.25rem;color:var(--ok);font-size:13px;font-weight:600;">✓ Nenhuma inconformidade identificada no processo.</p>`;
+  }
+
+  const linhas = todos.map(t => {
+    const sev = t.severidade === 'CRITICA' ? 'alto' : t.severidade === 'MEDIA' ? 'medio' : 'baixo';
+    const sevLabel = t.severidade === 'CRITICA' ? 'Crítica' : t.severidade === 'MEDIA' ? 'Média' : 'Baixa';
+    return `
+      <tr>
+        <td data-label="Grau"><span class="badge badge--${sev}">${sevLabel}</span></td>
+        <td data-label="Bloco"><strong>B${t.bloco}</strong> · ${escapeHtml(t.nome)}</td>
+        <td data-label="Arquivo" class="texto-recortado" title="${escapeHtml(t.arquivo)}">${escapeHtml(truncate(t.arquivo, 30))}</td>
+        <td data-label="Fundamento" class="texto-longo-quebra">
+          <em style="color:var(--brand);font-family:var(--font-mono);font-size:11px;">${escapeHtml(t.fundamento)}</em>
+        </td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="tabela-responsive-wrapper">
+      <table class="tabela-arquivos tabela-auditoria">
+        <thead><tr><th style="width:12%;">Grau</th><th style="width:28%;">Bloco / Verificação</th><th style="width:22%;">Arquivo</th><th style="width:38%;">Fundamento Legal</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>`;
 }
 
 function renderWorkspace() {
@@ -778,17 +771,9 @@ function renderWorkspace() {
   const riscoConsolidado  = calcularRiscoProcesso(p.arquivos);
   const arquivosOk        = p.arquivos.filter(a => a.status === 'ok');
 
-  const corRisco = riscoConsolidado === 'ALTO'  ? 'var(--danger)'
-                 : riscoConsolidado === 'MÉDIO' ? 'var(--warn)'
-                 : riscoConsolidado === 'BAIXO' ? 'var(--ok)'
-                 : 'var(--text-dim)';
-  const badgeCls = riscoConsolidado === 'ALTO'  ? 'badge--alto'
-                 : riscoConsolidado === 'MÉDIO' ? 'badge--medio'
-                 : riscoConsolidado === 'BAIXO' ? 'badge--baixo'
-                 : 'badge--neutro';
-  const emoji = riscoConsolidado === 'ALTO'  ? '🔴'
-              : riscoConsolidado === 'MÉDIO' ? '🟡'
-              : riscoConsolidado === 'BAIXO' ? '🟢' : '⚪';
+  const corRisco = riscoConsolidado === 'ALTO' ? 'var(--danger)' : riscoConsolidado === 'MÉDIO' ? 'var(--warn)' : riscoConsolidado === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+  const badgeCls = riscoConsolidado === 'ALTO' ? 'badge--alto' : riscoConsolidado === 'MÉDIO' ? 'badge--medio' : riscoConsolidado === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
+  const emoji = riscoConsolidado === 'ALTO' ? '🔴' : riscoConsolidado === 'MÉDIO' ? '🟡' : riscoConsolidado === 'BAIXO' ? '🟢' : '⚪';
 
   const totalArquivos   = p.arquivos.length;
   const totalAplicaveis = arquivosOk.reduce((s, a) => s + (a.estatisticas?.aplicaveis || 0), 0);
@@ -798,17 +783,13 @@ function renderWorkspace() {
   const dashValue = (scoreConsolidado / 100) * dashArray;
 
   const blocosAgg = agregarPorBloco(arquivosOk);
-  const blocosHtml = [1,2,3,4,5,6]
-    .map(b => renderBlocoCard(b, blocosAgg[b]))
-    .join('');
+  const blocosHtml = [1,2,3,4,5,6].map(b => renderBlocoCard(b, blocosAgg[b])).join('');
 
   els.workspace.innerHTML = `
     <div class="painel-auditoria">
-
       <header class="ws-header" style="border-top-color:${p.cor};" data-proc="${p.id}">
         <div class="ws-header__left">
-          <input type="text" class="ws-nome" value="${escapeHtml(p.nome)}"
-                 data-rename="${p.id}" title="Clique para renomear" />
+          <input type="text" class="ws-nome" value="${escapeHtml(p.nome)}" data-rename="${p.id}" title="Clique para renomear" />
           <div class="ws-tags">
             <span class="processo-cor-indicator" style="background:${p.cor};" aria-hidden="true"></span>
             ${p.tags.map(t => `<span class="tag">${escapeHtml(t)}<b data-remove-tag="${escapeHtml(t)}" data-proc="${p.id}">&times;</b></span>`).join('')}
@@ -825,38 +806,25 @@ function renderWorkspace() {
         <div class="ws-metrica__gauge" role="img" aria-label="Conformidade: ${scoreConsolidado}%">
           <svg viewBox="0 0 100 100">
             <circle class="track" cx="50" cy="50" r="44"></circle>
-            <circle class="value" cx="50" cy="50" r="44"
-              style="stroke:${corRisco}; stroke-dasharray:${dashValue} ${dashArray};"
-              data-score="${scoreConsolidado}"></circle>
+            <circle class="value" cx="50" cy="50" r="44" style="stroke:${corRisco}; stroke-dasharray:${dashValue} ${dashArray};" data-score="${scoreConsolidado}"></circle>
           </svg>
           <div class="ws-metrica__numero">${scoreConsolidado}<small>%</small></div>
         </div>
-
         <div class="ws-metrica__info" style="flex:1;min-width:0;">
           <h3>Conformidade Global do Processo</h3>
-          <p>${totalArquivos === 0
-            ? 'Adicione arquivos para calcular a conformidade.'
-            : `${totalArquivos} documento(s) · ${totalAplicaveis} regras aplicáveis · ${totalInconf} inconformidade(s)`}</p>
+          <p>${totalArquivos === 0 ? 'Adicione arquivos para calcular a conformidade.' : `${totalArquivos} documento(s) · ${totalAplicaveis} regras aplicáveis · ${totalInconf} inconformidade(s)`}</p>
           <div class="meta-line">
             <span><strong>${totalArquivos}</strong> arquivo(s)</span>
             <span><strong>${totalAplicaveis}</strong> verificações</span>
             <span><strong>${totalInconf}</strong> achados</span>
           </div>
         </div>
-
-        <div>
-          <span class="badge ${badgeCls}">${emoji} ${riscoConsolidado}</span>
-        </div>
+        <div><span class="badge ${badgeCls}">${emoji} ${riscoConsolidado}</span></div>
       </section>
 
       <section aria-label="Resumo por bloco de verificação">
-        <h3 style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;
-                   color:var(--text-dim);font-weight:800;margin:0 0 .75rem;">
-          Resumo por Bloco de Verificação
-        </h3>
-        <div class="grid-blocos">
-          ${blocosHtml}
-        </div>
+        <h3 style="font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:800;margin:0 0 .75rem;">Resumo por Bloco de Verificação</h3>
+        <div class="grid-blocos">${blocosHtml}</div>
       </section>
 
       ${totalInconf > 0 ? `
@@ -866,37 +834,21 @@ function renderWorkspace() {
             <span class="ws-secao__count">${totalInconf}</span>
           </header>
           ${renderAchadosConsolidados(arquivosOk)}
-        </section>
-      ` : ''}
+        </section>` : ''}
 
       <section class="ws-secao">
         <header class="ws-secao__head">
           <span class="ws-secao__title">Documentos do Processo</span>
           <span class="ws-secao__count">${totalArquivos}</span>
         </header>
-
         ${totalArquivos === 0
-          ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;">
-               Nenhum arquivo adicionado. Use a área abaixo para enviar documentos.
-             </p>`
-          : `<div class="tabela-responsive-wrapper">
-              <table class="tabela-arquivos">
-                <thead>
-                  <tr>
-                    <th class="col-arquivo">Arquivo</th>
-                    <th class="col-score">Conformidade</th>
-                    <th class="col-risco">Risco</th>
-                    <th class="col-acoes">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>${p.arquivos.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
-              </table>
-            </div>`
-        }
-
+          ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;">Nenhum arquivo adicionado. Use a área abaixo para enviar documentos.</p>`
+          : `<div class="tabela-responsive-wrapper"><table class="tabela-arquivos">
+              <thead><tr><th class="col-arquivo">Arquivo</th><th class="col-score">Conformidade</th><th class="col-risco">Risco</th><th class="col-acoes">Ações</th></tr></thead>
+              <tbody>${p.arquivos.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
+            </table></div>`}
         <div class="ws-dropzone" data-drop="${p.id}" tabindex="0" role="button">
-          <svg viewBox="0 0 24 24" width="28" height="28" fill="none"
-               stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
             <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round"/>
           </svg>
@@ -906,36 +858,21 @@ function renderWorkspace() {
       </section>
 
       <div class="ws-actions" style="margin-top:1rem;">
-        <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
-          📄 Exportar Relatório do Processo Completo (PDF)
-        </button>
-        <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>
-          💾 Salvar este Processo (JSON)
-        </button>
+        <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>📄 Exportar Relatório do Processo Completo (PDF)</button>
+        <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>💾 Salvar este Processo (JSON)</button>
       </div>
-    </div>
-  `;
+    </div>`;
 
   bindEventosWorkspace();
   animarGauge();
 }
 
 function renderLinhaArquivo(procId, arq) {
-  const score = arq.status === 'ok' && typeof arq.score === 'number'
-    ? `${arq.score.toFixed(1)}%`
-    : (arq.status === 'erro' ? 'Erro' : '…');
+  const score = arq.status === 'ok' && typeof arq.score === 'number' ? `${arq.score.toFixed(1)}%` : (arq.status === 'erro' ? 'Erro' : '…');
   const risco = arq.risco || '—';
-  const badgeCls = risco === 'ALTO'  ? 'badge--alto'
-                 : risco === 'MÉDIO' ? 'badge--medio'
-                 : risco === 'BAIXO' ? 'badge--baixo'
-                 : 'badge--neutro';
-  const emoji = risco === 'ALTO'  ? '🔴'
-              : risco === 'MÉDIO' ? '🟡'
-              : risco === 'BAIXO' ? '🟢' : '⚪';
-  const corScore = risco === 'ALTO'  ? 'var(--danger)'
-                 : risco === 'MÉDIO' ? 'var(--warn)'
-                 : risco === 'BAIXO' ? 'var(--ok)'
-                 : 'var(--text-dim)';
+  const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
+  const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
+  const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
 
   return `
     <tr>
@@ -948,12 +885,8 @@ function renderLinhaArquivo(procId, arq) {
           </span>
         </div>
       </td>
-      <td class="col-score" data-label="Conformidade">
-        <span class="arquivo-score" style="color:${corScore};">${score}</span>
-      </td>
-      <td class="col-risco" data-label="Risco">
-        <span class="badge ${badgeCls}">${emoji} ${risco}</span>
-      </td>
+      <td class="col-score" data-label="Conformidade"><span class="arquivo-score" style="color:${corScore};">${score}</span></td>
+      <td class="col-risco" data-label="Risco"><span class="badge ${badgeCls}">${emoji} ${risco}</span></td>
       <td data-label="Ações">
         <div class="arquivo-acoes">
           <button class="btn-icon" data-view-arq="${arq.id}" data-proc="${procId}" title="Ver detalhes" ${arq.status !== 'ok' ? 'disabled' : ''}>👁️</button>
@@ -961,8 +894,7 @@ function renderLinhaArquivo(procId, arq) {
           <button class="btn-icon danger" data-del-arq="${arq.id}" data-proc="${procId}" title="Excluir">🗑</button>
         </div>
       </td>
-    </tr>
-  `;
+    </tr>`;
 }
 
 function animarGauge() {
@@ -972,9 +904,7 @@ function animarGauge() {
     const dashArray = 2 * Math.PI * 44;
     const score = Number(c.dataset.score) || 0;
     c.style.strokeDasharray = `0 ${dashArray}`;
-    requestAnimationFrame(() => {
-      c.style.strokeDasharray = `${(score / 100) * dashArray} ${dashArray}`;
-    });
+    requestAnimationFrame(() => { c.style.strokeDasharray = `${(score / 100) * dashArray} ${dashArray}`; });
   });
 }
 
@@ -1066,8 +996,7 @@ function bindEventosWorkspace() {
 
 function abrirInput(procId) {
   const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.multiple = true;
+  inp.type = 'file'; inp.multiple = true;
   inp.accept = '.pdf,.doc,.docx,.txt,.md,application/pdf,text/plain';
   inp.addEventListener('change', e => {
     if (e.target.files?.length) adicionarArquivos(procId, e.target.files);
@@ -1100,13 +1029,8 @@ function abrirModalArquivo(procId, arqId) {
         </div>
         <div class="achado__title">${escapeHtml(r.nome)}</div>
         <div class="achado__law">${escapeHtml(r.fundamento)}</div>
-        ${!r.conforme ? `
-          <div class="achado__body">
-            <strong>Constatação:</strong> ${escapeHtml(r.mensagemFalha)}
-            <div class="achado__rec"><strong>Recomendação:</strong> ${escapeHtml(r.recomendacao)}</div>
-          </div>` : ''}
-      </div>
-    `;
+        ${!r.conforme ? `<div class="achado__body"><strong>Constatação:</strong> ${escapeHtml(r.mensagemFalha)}<div class="achado__rec"><strong>Recomendação:</strong> ${escapeHtml(r.recomendacao)}</div></div>` : ''}
+      </div>`;
   }).join('');
 
   els.modalTitulo.textContent = a.nomeArquivo;
@@ -1115,25 +1039,19 @@ function abrirModalArquivo(procId, arqId) {
       <div class="detalhe-score__numero" style="color:${corScore};">${a.score.toFixed(1)}%</div>
       <div class="detalhe-score__info">
         <strong>${emoji} Risco ${a.risco}</strong>
-        <p>${st.ok || 0} conformes · ${st.falha || 0} inconformidades
-          (${st.criticas || 0} críticas · ${st.medias || 0} médias · ${st.baixas || 0} baixas)</p>
+        <p>${st.ok || 0} conformes · ${st.falha || 0} inconformidades (${st.criticas || 0} críticas · ${st.medias || 0} médias · ${st.baixas || 0} baixas)</p>
         <p>${st.aplicaveis || 0} de ${st.total || 0} regras aplicáveis</p>
       </div>
-      <div style="margin-left:auto;">
-        <button class="btn btn--primary btn--sm" id="btnPdfModal" type="button">📄 Baixar PDF Individual</button>
-      </div>
+      <div style="margin-left:auto;"><button class="btn btn--primary btn--sm" id="btnPdfModal" type="button">📄 Baixar PDF Individual</button></div>
     </div>
-
     <div class="detalhe-meta">
       <div class="detalhe-meta__item"><span class="detalhe-meta__key">Processo</span><span class="detalhe-meta__val">${escapeHtml(id.processo || '—')}</span></div>
       <div class="detalhe-meta__item"><span class="detalhe-meta__key">Modalidade</span><span class="detalhe-meta__val">${escapeHtml(id.modalidade || '—')}</span></div>
       <div class="detalhe-meta__item"><span class="detalhe-meta__key">Natureza</span><span class="detalhe-meta__val">${escapeHtml(id.natureza || '—')}</span></div>
       <div class="detalhe-meta__item"><span class="detalhe-meta__key">Órgão</span><span class="detalhe-meta__val">${escapeHtml(id.orgao || '—')}</span></div>
     </div>
-
     <h4 style="margin: 6px 0 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); font-weight: 800;">Achados</h4>
-    <div class="detalhe-lista">${achadosHtml}</div>
-  `;
+    <div class="detalhe-lista">${achadosHtml}</div>`;
 
   els.modal.classList.remove('is-hidden');
   $('#btnPdfModal')?.addEventListener('click', () => exportarRelatorioAuditPDF(a));
@@ -1145,23 +1063,21 @@ function fecharModal() {
 }
 
 /* ==========================================================================
- * 14. PDF INSTITUCIONAL — pdfMake
+ * 14. PDF INSTITUCIONAL — pdfMake (DESIGN EDITORIAL EXECUTIVO)
  * ======================================================================== */
 const PDF_PALETTE = {
-  primaria:       '#1e3a8a',
-  secundaria:     '#3b82f6',
-  texto:          '#1e293b',
-  textoMuted:     '#475569',
-  textoDim:       '#94a3b8',
-  zebra:          '#f8fafc',
-  borda:          '#e2e8f0',
-  headerTexto:    '#ffffff',
-  okBg:           '#dcfce7',
-  okFg:           '#15803d',
-  warnBg:         '#fef3c7',
-  warnFg:         '#b45309',
-  dangerBg:       '#fee2e2',
-  dangerFg:       '#b91c1c',
+  primaria:    '#1e3a8a',   // Azul Marinho Executivo
+  secundaria:  '#2563eb',   // Azul Royal
+  texto:       '#1e293b',   // Grafite Escuro
+  textoMuted:  '#64748b',
+  textoDim:    '#94a3b8',
+  zebra:       '#f8fafc',   // Cinza suave
+  borda:       '#e2e8f0',
+  headerTexto: '#ffffff',
+  okBg:        '#dcfce7',  okFg:     '#15803d',
+  warnBg:      '#fef3c7',  warnFg:   '#b45309',
+  dangerBg:    '#fee2e2',  dangerFg: '#b91c1c',
+  accentTeal:  '#0f766e',
 };
 
 function _riscoCor(risco) {
@@ -1183,108 +1099,144 @@ function gerarDefinicaoPDF(rep, opts = {}) {
   const st = rep.estatisticas || {};
   const risco = rep.risco || 'BAIXO';
   const score = rep.score || 0;
-  const corRisco = _riscoCor(risco);
+  const coresRisco = _riscoCor(risco);
 
   const dataGeracao = new Date();
-  const dataFmt = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const dataFmt = dataGeracao.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const numeroRelatorio = String(Math.floor(Math.random() * 900) + 100) + '/' + dataGeracao.getFullYear();
 
+  const PRIMARIA   = PDF_PALETTE.primaria;
+  const SECUNDARIA = PDF_PALETTE.secundaria;
+  const TEXTO      = PDF_PALETTE.texto;
+  const TEXTO_MUT  = PDF_PALETTE.textoMuted;
+  const TEXTO_DIM  = PDF_PALETTE.textoDim;
+  const ZEBRA      = PDF_PALETTE.zebra;
+  const BORDA      = PDF_PALETTE.borda;
+
+  /* ---------- HEADER / FOOTER ---------- */
   const header = () => ({
-    margin: [40, 22, 40, 0],
+    margin: [40, 20, 40, 0],
     columns: [
-      { text: 'LICITAAUDIT · RELATÓRIO DE AUDITORIA E CONFORMIDADE LICITATÓRIA', fontSize: 7.5, color: PDF_PALETTE.textoDim, characterSpacing: 0.4 },
-      { text: `${numeroRelatorio}`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right' },
-    ],
+      { text: '', width: '*' },
+      { text: 'SISTEMA LICITAAUDIT · LEI Nº 14.133/2021', alignment: 'right', fontSize: 8, color: TEXTO_MUT, characterSpacing: 0.4 }
+    ]
   });
 
   const footer = (currentPage, pageCount) => ({
-    margin: [40, 12, 40, 0],
+    margin: [40, 20, 40, 0],
     columns: [
-      { text: 'Documento gerado automaticamente pelo LicitaAudit nos termos da Lei nº 14.133/2021', fontSize: 7, color: PDF_PALETTE.textoDim, italics: true },
-      { text: `Página ${currentPage} de ${pageCount}`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right' },
-    ],
+      { text: `Emitido em ${dataFmt} · Relatório nº ${numeroRelatorio}`, fontSize: 8, color: TEXTO_DIM },
+      { text: `Página ${currentPage} de ${pageCount}`, alignment: 'right', fontSize: 8, color: TEXTO_DIM }
+    ]
   });
 
-  const tituloBloco = {
+  /* ---------- BANNER TÍTULO ---------- */
+  const banner = {
     table: { widths: ['*'], body: [[{
-      text: tipo === 'processo' ? 'RELATÓRIO CONSOLIDADO DE PROCESSO' : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE',
-      fillColor: PDF_PALETTE.primaria, color: PDF_PALETTE.headerTexto,
-      fontSize: 13, bold: true, alignment: 'center', margin: [0, 10, 0, 10],
+      text: tipo === 'processo'
+        ? 'RELATÓRIO CONSOLIDADO DE PROCESSO'
+        : 'RELATÓRIO DE AUDITORIA DE CONFORMIDADE LICITATÓRIA',
+      fillColor: PRIMARIA, color: '#ffffff',
+      fontSize: 13, bold: true, alignment: 'center',
+      margin: [0, 8, 0, 8]
     }]] },
     layout: 'noBorders',
-    margin: [0, 0, 0, 4],
+    margin: [0, 0, 0, 4]
   };
 
-  const subtituloBloco = {
-    text: nome, fontSize: 9, color: PDF_PALETTE.textoMuted,
-    alignment: 'center', italics: true, margin: [0, 0, 0, 18],
+  const subtitulo = {
+    text: nome, fontSize: 10, color: TEXTO_MUT, alignment: 'center', italics: true, margin: [0, 0, 0, 16]
   };
 
+  /* ---------- CARD DE METADADOS ---------- */
   const metadados = {
     table: {
-      widths: ['30%', '70%'],
+      widths: ['22%', '78%'],
       body: [
-        [{ text: tipo === 'processo' ? 'Processo / Workspace:' : 'Arquivo:', style: 'metaKey' }, { text: nome, style: 'metaValue' }],
-        [{ text: 'Órgão / Entidade:', style: 'metaKey' }, { text: id.orgao || 'Não informado', style: 'metaValue' }],
-        [{ text: 'Processo Administrativo:', style: 'metaKey' }, { text: id.processo || 'Não identificado', style: 'metaValue' }],
-        [{ text: 'Modalidade Declarada:', style: 'metaKey' }, { text: id.modalidade || 'Não identificada', style: 'metaValue' }],
-        [{ text: 'Objeto:', style: 'metaKey' }, { text: id.objeto || 'Não identificado', style: 'metaValue' }],
-        [{ text: 'Data da Análise:', style: 'metaKey' }, { text: dataFmt, style: 'metaValue' }],
-      ],
+        [{ text: tipo === 'processo' ? 'Processo / Workspace:' : 'Arquivo:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: nome, fontSize: 9, color: TEXTO }],
+        [{ text: 'Órgão / Entidade:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: id.orgao || 'Não informado', fontSize: 9, color: TEXTO }],
+        [{ text: 'Nº do Processo:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: id.processo || 'Não identificado', fontSize: 9, color: TEXTO }],
+        [{ text: 'Modalidade:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: id.modalidade || 'Não identificada', fontSize: 9, color: TEXTO }],
+        [{ text: 'Natureza:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: id.natureza || 'Não identificada', fontSize: 9, color: TEXTO }],
+        [{ text: 'Objeto:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: id.objeto || 'Não identificado', fontSize: 9, color: TEXTO }],
+        [{ text: 'Data da Análise:', bold: true, color: PRIMARIA, fontSize: 9 }, { text: dataFmt, fontSize: 9, color: TEXTO }]
+      ]
     },
     layout: {
-      hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 1 : 0.5,
+      hLineWidth: () => 0.5,
       vLineWidth: () => 0,
-      hLineColor: () => PDF_PALETTE.borda,
-      paddingTop: () => 7, paddingBottom: () => 7, paddingLeft: () => 10, paddingRight: () => 10,
-      fillColor: (rowIndex) => rowIndex % 2 === 0 ? PDF_PALETTE.zebra : '#ffffff',
+      hLineColor: () => BORDA,
+      paddingTop: () => 7,
+      paddingBottom: () => 7,
+      paddingLeft: () => 10,
+      paddingRight: () => 10,
+      fillColor: (rowIndex) => rowIndex % 2 === 0 ? ZEBRA : null
     },
-    margin: [0, 0, 0, 20],
+    margin: [0, 0, 0, 18]
   };
 
-  const totalInconf = st.falha || 0;
+  /* ---------- DASHBOARD EXECUTIVO (3 colunas) ---------- */
+  const totalInconf   = st.falha || 0;
   const totalCriticas = st.criticas || 0;
-  const totalMedias = st.medias || 0;
-  const totalBaixas = st.baixas || 0;
+  const totalMedias   = st.medias || 0;
+  const totalBaixas   = st.baixas || 0;
 
   const dashboard = {
     table: {
       widths: ['*', '*', '*'],
       body: [[
-        { stack: [
-          { text: 'GRAU DE CONFORMIDADE', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
-          { text: `${score}%`, fontSize: 22, bold: true, color: PDF_PALETTE.primaria, alignment: 'center', margin: [0, 4, 0, 0] },
-        ], fillColor: PDF_PALETTE.zebra, margin: [8, 12, 8, 12] },
-        { stack: [
-          { text: 'CLASSIFICAÇÃO DE RISCO', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
-          { table: { widths: ['*'], body: [[{ text: risco, fontSize: 12, bold: true, color: corRisco.fg, fillColor: corRisco.bg, alignment: 'center', margin: [0, 5, 0, 5] }]] }, layout: 'noBorders', margin: [0, 6, 0, 0] },
-        ], fillColor: PDF_PALETTE.zebra, margin: [8, 12, 8, 12] },
-        { stack: [
-          { text: 'INCONFORMIDADES', fontSize: 7.5, color: PDF_PALETTE.textoDim, bold: true, characterSpacing: 0.5, alignment: 'center' },
-          { text: String(totalInconf), fontSize: 22, bold: true, color: totalInconf > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.okFg, alignment: 'center', margin: [0, 4, 0, 0] },
-          { text: `${totalCriticas} crítica(s) · ${totalMedias} média(s) · ${totalBaixas} baixa(s)`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'center', margin: [0, 2, 0, 0] },
-        ], fillColor: PDF_PALETTE.zebra, margin: [8, 12, 8, 12] },
-      ]],
+        {
+          stack: [
+            { text: 'GRAU DE CONFORMIDADE', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
+            { text: `${score}%`, fontSize: 22, bold: true, color: PRIMARIA, alignment: 'center', margin: [0, 6, 0, 0] }
+          ],
+          fillColor: ZEBRA, margin: [8, 12, 8, 12]
+        },
+        {
+          stack: [
+            { text: 'CLASSIFICAÇÃO DE RISCO', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
+            {
+              table: { widths: ['*'], body: [[{
+                text: risco, fontSize: 12, bold: true, color: coresRisco.fg,
+                fillColor: coresRisco.bg, alignment: 'center', margin: [0, 6, 0, 6]
+              }]] },
+              layout: 'noBorders', margin: [0, 6, 0, 0]
+            }
+          ],
+          fillColor: ZEBRA, margin: [8, 12, 8, 12]
+        },
+        {
+          stack: [
+            { text: 'INCONFORMIDADES', fontSize: 8, bold: true, color: TEXTO_MUT, characterSpacing: 0.5, alignment: 'center' },
+            { text: String(totalInconf), fontSize: 22, bold: true, color: totalInconf > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.okFg, alignment: 'center', margin: [0, 6, 0, 0] },
+            { text: `${totalCriticas} Críticas · ${totalMedias} Médias · ${totalBaixas} Baixas`, fontSize: 7.5, color: TEXTO_DIM, alignment: 'center', margin: [0, 3, 0, 0] }
+          ],
+          fillColor: ZEBRA, margin: [8, 12, 8, 12]
+        }
+      ]]
     },
     layout: {
-      hLineWidth: () => 0.5, vLineWidth: () => 0.5,
-      hLineColor: () => PDF_PALETTE.borda, vLineColor: () => PDF_PALETTE.borda,
+      hLineWidth: () => 0.5,
+      vLineWidth: () => 0.5,
+      hLineColor: () => BORDA,
+      vLineColor: () => BORDA
     },
-    margin: [0, 0, 0, 24],
+    margin: [0, 0, 0, 22]
   };
 
+  /* ---------- RESUMO POR BLOCO ---------- */
   const blocos = st.porBloco || {};
   const linhasBlocos = [1, 2, 3, 4, 5, 6].map(b => {
     const x = blocos[b] || { titulo: BLOCO_TITULO[b], total: 0, ok: 0, falha: 0, criticas: 0 };
     const pct = x.total > 0 ? Math.round((x.ok / x.total) * 100) : 100;
     const corPct = pct >= 90 ? PDF_PALETTE.okFg : pct >= 70 ? PDF_PALETTE.warnFg : PDF_PALETTE.dangerFg;
     return [
-      { text: String(b), alignment: 'center', fontSize: 9, color: PDF_PALETTE.textoMuted, bold: true },
-      { text: x.titulo, fontSize: 9 },
-      { text: String(x.total), alignment: 'center', fontSize: 9, color: PDF_PALETTE.textoMuted },
-      { text: String(x.ok), alignment: 'center', fontSize: 9, color: PDF_PALETTE.okFg, bold: true },
-      { text: String(x.falha), alignment: 'center', fontSize: 9, color: x.falha > 0 ? PDF_PALETTE.dangerFg : PDF_PALETTE.textoMuted, bold: x.falha > 0 },
-      { text: `${pct}%`, alignment: 'center', fontSize: 9, color: corPct, bold: true },
+      { text: `B${b}`, alignment: 'center', fontSize: 9, color: PRIMARIA, bold: true },
+      { text: x.titulo, fontSize: 9, color: TEXTO },
+      { text: String(x.total), alignment: 'center', fontSize: 9, color: TEXTO_MUT },
+      { text: String(x.ok),    alignment: 'center', fontSize: 9, color: PDF_PALETTE.okFg, bold: true },
+      { text: String(x.falha), alignment: 'center', fontSize: 9, color: x.falha > 0 ? PDF_PALETTE.dangerFg : TEXTO_MUT, bold: x.falha > 0 },
+      { text: `${pct}%`,       alignment: 'center', fontSize: 9, color: corPct, bold: true }
     ];
   });
 
@@ -1294,70 +1246,83 @@ function gerarDefinicaoPDF(rep, opts = {}) {
       widths: ['6%', '44%', '13%', '13%', '12%', '12%'],
       body: [
         [
-          { text: '#', style: 'tableHeader', alignment: 'center' },
-          { text: 'BLOCO DE VERIFICAÇÃO', style: 'tableHeader' },
-          { text: 'APLICÁVEIS', style: 'tableHeader', alignment: 'center' },
-          { text: 'OK', style: 'tableHeader', alignment: 'center' },
-          { text: 'FALHAS', style: 'tableHeader', alignment: 'center' },
-          { text: '% OK', style: 'tableHeader', alignment: 'center' },
+          { text: '#',               bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'BLOCO DE VERIFICAÇÃO', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] },
+          { text: 'APLICÁVEIS',      bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'OK',              bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'FALHAS',          bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: '% OK',            bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] }
         ],
-        ...linhasBlocos,
-      ],
+        ...linhasBlocos
+      ]
     },
     layout: {
-      hLineWidth: () => 0.4, vLineWidth: () => 0.4,
-      hLineColor: () => PDF_PALETTE.borda, vLineColor: () => PDF_PALETTE.borda,
-      fillColor: (i) => i === 0 ? PDF_PALETTE.primaria : (i % 2 === 0 ? PDF_PALETTE.zebra : null),
-      paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 6, paddingRight: () => 6,
+      hLineWidth: () => 0.4,
+      vLineWidth: () => 0.4,
+      hLineColor: () => BORDA,
+      vLineColor: () => BORDA,
+      fillColor: (i) => i === 0 ? PRIMARIA : (i % 2 === 0 ? ZEBRA : null),
+      paddingTop: () => 5, paddingBottom: () => 5, paddingLeft: () => 6, paddingRight: () => 6
     },
-    margin: [0, 0, 0, 22],
+    margin: [0, 0, 0, 20]
   };
 
+  /* ---------- QUADRO DETALHADO DE NÃO CONFORMIDADES ---------- */
   const falhas = (rep.resultados || []).filter(r => r.aplicavel && !r.conforme);
 
   const falhasBody = falhas.length === 0
     ? [[
-        { text: '—', alignment: 'center', color: PDF_PALETTE.textoDim, fontSize: 9 },
-        { text: 'Nenhuma inconformidade identificada entre as regras aplicáveis.', italics: true, color: PDF_PALETTE.okFg, colSpan: 3, fontSize: 9 }, {}, {},
+        { text: '—', alignment: 'center', color: TEXTO_DIM, fontSize: 9 },
+        { text: 'Nenhuma inconformidade identificada entre as regras aplicáveis.', italics: true, color: PDF_PALETTE.okFg, colSpan: 3, fontSize: 9, alignment: 'center', margin: [0, 10, 0, 10] },
+        {}, {}
       ]]
     : falhas.map(r => {
         const sc = _severidadeCor(r.severidade);
         return [
-          { stack: [
-            { text: sc.label, fontSize: 7.5, bold: true, color: sc.fg, alignment: 'center' },
-            { text: `[${r.id}]`, fontSize: 7, color: PDF_PALETTE.textoDim, alignment: 'center', margin: [0, 2, 0, 0] },
-          ], fillColor: sc.bg, margin: [2, 4, 2, 4] },
-          { stack: [
-            { text: r.nome, fontSize: 9, bold: true, color: PDF_PALETTE.texto },
-            { text: r.mensagemFalha, fontSize: 8, color: PDF_PALETTE.textoMuted, margin: [0, 3, 0, 3] },
-            { text: `→ ${r.recomendacao}`, fontSize: 7.5, color: '#0f766e', italics: true },
-          ] },
-          { text: r.fundamento, fontSize: 7.5, color: PDF_PALETTE.secundaria, italics: true },
+          {
+            stack: [
+              { text: sc.label, fontSize: 7.5, bold: true, color: sc.fg, alignment: 'center' },
+              { text: `[${r.id}]`, fontSize: 7, color: TEXTO_DIM, alignment: 'center', margin: [0, 2, 0, 0] }
+            ],
+            fillColor: sc.bg, margin: [2, 5, 2, 5]
+          },
+          {
+            stack: [
+              { text: r.nome, fontSize: 9, bold: true, color: '#0f172a' },
+              { text: r.mensagemFalha, fontSize: 8, color: '#475569', margin: [0, 3, 0, 3] },
+              { text: `→ ${r.recomendacao}`, fontSize: 7.5, color: PDF_PALETTE.accentTeal, italics: true }
+            ],
+            margin: [4, 3, 4, 3]
+          },
+          { text: r.fundamento, fontSize: 7.5, color: SECUNDARIA, italics: true, margin: [4, 3, 4, 3] }
         ];
       });
 
   const detalhado = {
     table: {
       headerRows: 1, dontBreakRows: true,
-      widths: ['12%', '60%', '28%'],
+      widths: ['14%', '58%', '28%'],
       body: [
         [
-          { text: 'GRAU / ID', style: 'tableHeader', alignment: 'center' },
-          { text: 'ACHADO E RECOMENDAÇÃO', style: 'tableHeader' },
-          { text: 'FUNDAMENTO LEGAL', style: 'tableHeader' },
+          { text: 'GRAU / ID',            bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, alignment: 'center', margin: [0, 4, 0, 4] },
+          { text: 'ACHADO E RECOMENDAÇÃO', bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] },
+          { text: 'FUNDAMENTO LEGAL',      bold: true, fontSize: 8.5, color: '#ffffff', fillColor: PRIMARIA, margin: [0, 4, 0, 4] }
         ],
-        ...falhasBody,
-      ],
+        ...falhasBody
+      ]
     },
     layout: {
-      hLineWidth: () => 0.4, vLineWidth: () => 0.4,
-      hLineColor: () => PDF_PALETTE.borda, vLineColor: () => PDF_PALETTE.borda,
-      fillColor: (i) => i === 0 ? PDF_PALETTE.primaria : null,
-      paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 7, paddingRight: () => 7,
+      hLineWidth: () => 0.4,
+      vLineWidth: () => 0.4,
+      hLineColor: () => BORDA,
+      vLineColor: () => BORDA,
+      fillColor: (i) => i === 0 ? PRIMARIA : null,
+      paddingTop: () => 6, paddingBottom: () => 6, paddingLeft: () => 7, paddingRight: () => 7
     },
-    margin: [0, 0, 0, 22],
+    margin: [0, 0, 0, 22]
   };
 
+  /* ---------- PARECER TÉCNICO ---------- */
   const parecerTexto = risco === 'ALTO'
     ? 'PUBLICAÇÃO DESACONSELHADA — Foram identificados vícios de severidade CRÍTICA/impeditiva que comprometem a legalidade do procedimento. Recomenda-se a devolução imediata dos autos à unidade requisitante para saneamento integral antes de qualquer publicação.'
     : risco === 'MÉDIO'
@@ -1369,60 +1334,90 @@ function gerarDefinicaoPDF(rep, opts = {}) {
                      : PDF_PALETTE.okBg;
 
   const parecer = {
-    table: { widths: ['*'], body: [[{
-      stack: [
-        { text: 'PARECER TÉCNICO DA AUDITORIA', fontSize: 8, bold: true, color: PDF_PALETTE.textoMuted, characterSpacing: 0.6 },
-        { text: parecerTexto, fontSize: 9.5, color: PDF_PALETTE.texto, margin: [0, 5, 0, 0], alignment: 'justify', lineHeight: 1.4 },
-      ], fillColor: corParecerBg, margin: [14, 12, 14, 12],
-    }]] },
+    table: {
+      widths: ['*'],
+      body: [[{
+        stack: [
+          { text: 'PARECER TÉCNICO DA AUDITORIA', fontSize: 8.5, bold: true, color: PRIMARIA, characterSpacing: 0.6 },
+          { text: parecerTexto, fontSize: 9.5, color: TEXTO, margin: [0, 6, 0, 0], alignment: 'justify', lineHeight: 1.45 }
+        ],
+        fillColor: corParecerBg, margin: [14, 12, 14, 12]
+      }]]
+    },
     layout: 'noBorders',
-    margin: [0, 0, 0, 26],
+    margin: [0, 0, 0, 28]
   };
 
+  /* ---------- ASSINATURA ---------- */
   const assinatura = {
     table: {
       dontBreakRows: true, widths: ['*'],
       body: [[{
         stack: [
-          { text: ' ', margin: [0, 24, 0, 0] },
+          { text: ' ', margin: [0, 22, 0, 0] },
           { canvas: [{ type: 'line', x1: 130, y1: 0, x2: 385, y2: 0, lineWidth: 0.8, lineColor: '#334155' }] },
-          { text: 'Equipe de Auditoria de Controle Interno', fontSize: 10, bold: true, alignment: 'center', margin: [0, 6, 0, 2], color: PDF_PALETTE.texto },
-          { text: 'Agente de Auditoria · LicitaAudit — Análise Automatizada', fontSize: 8.5, alignment: 'center', color: PDF_PALETTE.textoMuted },
-          { text: (id.orgao || '').toUpperCase(), fontSize: 8, alignment: 'center', color: PDF_PALETTE.textoDim, italics: true, margin: [0, 2, 0, 0] },
-          { text: `${dataFmt} · ${numeroRelatorio}`, fontSize: 7.5, alignment: 'center', color: PDF_PALETTE.textoDim, margin: [0, 6, 0, 0] },
-        ], margin: [0, 8, 0, 10],
-      }]],
+          { text: 'Equipe de Auditoria de Controle Interno', fontSize: 10, bold: true, alignment: 'center', margin: [0, 6, 0, 2], color: TEXTO },
+          { text: 'Agente de Auditoria · LicitaAudit — Análise Automatizada', fontSize: 8.5, alignment: 'center', color: TEXTO_MUT },
+          { text: (id.orgao || '').toUpperCase(), fontSize: 8, alignment: 'center', color: TEXTO_DIM, italics: true, margin: [0, 2, 0, 0] },
+          { text: `${dataFmt} · Relatório ${numeroRelatorio}`, fontSize: 7.5, alignment: 'center', color: TEXTO_DIM, margin: [0, 6, 0, 0] }
+        ],
+        margin: [0, 8, 0, 10]
+      }]]
     },
-    layout: 'noBorders',
+    layout: 'noBorders'
   };
 
+  /* ---------- MONTAGEM FINAL ---------- */
   return {
     pageSize: 'A4',
-    pageMargins: [40, 60, 40, 50],
+    pageMargins: [40, 50, 40, 50],
+
     header, footer,
-    defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.35 },
+
+    defaultStyle: {
+      font: 'Roboto',
+      fontSize: 9,
+      color: TEXTO,
+      lineHeight: 1.35
+    },
+
     content: [
-      tituloBloco, subtituloBloco, metadados, dashboard,
-      { text: 'RESUMO POR BLOCO DE VERIFICAÇÃO', style: 'secaoTitulo' },
+      banner,
+      subtitulo,
+      metadados,
+      dashboard,
+      { text: 'RESUMO POR BLOCO DE VERIFICAÇÃO', style: 'secaoTitulo', keepWithNext: true },
       resumoBlocos,
-      { text: 'QUADRO DETALHADO DE NÃO CONFORMIDADES', style: 'secaoTitulo' },
-      detalhado, parecer, assinatura,
+      { text: 'QUADRO DETALHADO DE NÃO CONFORMIDADES', style: 'secaoTitulo', keepWithNext: true },
+      detalhado,
+      parecer,
+      assinatura
     ],
+
     styles: {
       secaoTitulo: {
-        fontSize: 10.5, bold: true, color: PDF_PALETTE.primaria,
-        margin: [0, 8, 0, 8], characterSpacing: 0.3, keepWithNext: true,
+        fontSize: 11,
+        bold: true,
+        color: PRIMARIA,
+        margin: [0, 10, 0, 6],
+        characterSpacing: 0.4,
+        keepWithNext: true
       },
       tableHeader: {
-        bold: true, fontSize: 8, color: PDF_PALETTE.headerTexto,
-        fillColor: PDF_PALETTE.primaria, alignment: 'left', margin: [0, 3, 0, 3],
-      },
-      metaKey:   { fontSize: 8.5, bold: true, color: PDF_PALETTE.textoMuted },
-      metaValue: { fontSize: 9, color: PDF_PALETTE.texto },
-    },
+        bold: true,
+        fontSize: 8.5,
+        color: '#ffffff',
+        fillColor: PRIMARIA,
+        alignment: 'left',
+        margin: [0, 3, 0, 3]
+      }
+    }
   };
 }
 
+/* --------------------------------------------------------------------------
+ * Wrappers públicos
+ * ------------------------------------------------------------------------ */
 function exportarRelatorioAuditPDF(arq) {
   if (!window.pdfMake) { toast('pdfMake não carregado.', 'error'); return; }
   if (!arq || arq.status !== 'ok') { toast('Arquivo não disponível para exportação.', 'error'); return; }
@@ -1431,10 +1426,7 @@ function exportarRelatorioAuditPDF(arq) {
   try {
     pdfMake.createPdf(dd).download(`Relatorio_${safe}.pdf`);
     toast('PDF individual gerado.', 'ok');
-  } catch (err) {
-    console.error(err);
-    toast('Erro ao gerar PDF.', 'error');
-  }
+  } catch (err) { console.error(err); toast('Erro ao gerar PDF.', 'error'); }
 }
 
 function exportarRelatorioProcessoConsolidadoPDF(processo) {
@@ -1454,10 +1446,7 @@ function exportarRelatorioProcessoConsolidadoPDF(processo) {
   try {
     pdfMake.createPdf(dd).download(`Relatorio_Processo_${safe}.pdf`);
     toast('PDF consolidado do processo gerado.', 'ok');
-  } catch (err) {
-    console.error(err);
-    toast('Erro ao gerar PDF do processo.', 'error');
-  }
+  } catch (err) { console.error(err); toast('Erro ao gerar PDF do processo.', 'error'); }
 }
 
 function exportarPDFTodos() {
@@ -1481,19 +1470,21 @@ function exportarPDFTodos() {
 
   const ddFinal = {
     pageSize: 'A4',
-    pageMargins: [40, 60, 40, 50],
+    pageMargins: [40, 50, 40, 50],
     defaultStyle: { font: 'Roboto', fontSize: 9, color: PDF_PALETTE.texto, lineHeight: 1.35 },
     header: () => ({
-      margin: [40, 22, 40, 0],
-      text: 'LICITAAUDIT · LOTE DE RELATÓRIOS DE AUDITORIA',
-      fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right',
+      margin: [40, 20, 40, 0],
+      columns: [
+        { text: '', width: '*' },
+        { text: 'SISTEMA LICITAAUDIT · LOTE DE RELATÓRIOS', alignment: 'right', fontSize: 8, color: PDF_PALETTE.textoMuted, characterSpacing: 0.4 }
+      ]
     }),
     footer: (p, n) => ({
-      margin: [40, 12, 40, 0],
+      margin: [40, 20, 40, 0],
       columns: [
-        { text: 'Documento gerado pelo LicitaAudit · Lei nº 14.133/2021', fontSize: 7, color: PDF_PALETTE.textoDim, italics: true },
-        { text: `Página ${p} de ${n}`, fontSize: 7.5, color: PDF_PALETTE.textoDim, alignment: 'right' },
-      ],
+        { text: 'Documento gerado pelo LicitaAudit · Lei nº 14.133/2021', fontSize: 8, color: PDF_PALETTE.textoDim },
+        { text: `Página ${p} de ${n}`, alignment: 'right', fontSize: 8, color: PDF_PALETTE.textoDim }
+      ]
     }),
     content: contents,
   };
@@ -1501,10 +1492,7 @@ function exportarPDFTodos() {
   try {
     pdfMake.createPdf(ddFinal).download(`LicitaAudit_Lote_${Date.now()}.pdf`);
     toast(`${processosComArquivo.length} processo(s) em PDF único.`, 'ok');
-  } catch (err) {
-    console.error(err);
-    toast('Erro ao gerar PDF em lote.', 'error');
-  }
+  } catch (err) { console.error(err); toast('Erro ao gerar PDF em lote.', 'error'); }
 }
 
 /* ==========================================================================
@@ -1513,8 +1501,7 @@ function exportarPDFTodos() {
 function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
-    ferramenta: 'LicitaAudit',
-    versao: '6.5.0',
+    ferramenta: 'LicitaAudit', versao: '6.6.0',
     exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags,
@@ -1529,8 +1516,7 @@ function exportarJSON(processos = null) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = `licitaudit-${Date.now()}.json`;
+  a.href = url; a.download = `licitaudit-${Date.now()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   toast('JSON exportado.', 'ok');
@@ -1541,16 +1527,12 @@ async function importarJSON(file) {
     const dados = JSON.parse(texto);
     if (!dados.processos || !Array.isArray(dados.processos)) { toast('JSON inválido.', 'error'); return; }
     state.processos = dados.processos.map(p => ({
-      ...p,
-      arquivos: (p.arquivos || []).map(a => ({ ...a, status: 'ok' })),
+      ...p, arquivos: (p.arquivos || []).map(a => ({ ...a, status: 'ok' })),
     }));
     state.ativo = state.processos[0]?.id || null;
     renderTudo();
     toast(`${state.processos.length} processo(s) carregado(s).`, 'ok');
-  } catch (err) {
-    console.error(err);
-    toast('Erro ao carregar JSON.', 'error');
-  }
+  } catch (err) { console.error(err); toast('Erro ao carregar JSON.', 'error'); }
 }
 
 /* ==========================================================================
@@ -1595,7 +1577,7 @@ Estudo Técnico Preliminar (ETP) e Termo de Referência (TR) anexos.
 Parcelado em 2 lotes por compatibilidade técnica.
 
 7. VEDAÇÕES
-Vedada a indicação de marca ou modelo. Vedada a participação de servidores do órgão. Exigência de declaração de trabalho infantil.
+Vedada a indicação de marca ou modelo. Vedada a participação de servidores do órgão. Exigência de declaração de trabalho infantil. Vedada a contratação de empresas suspensas no CEIS/CNEP.
 
 8. HABILITAÇÃO
 Qualificação técnica. Declaração formal em substituição à vistoria.
@@ -1613,11 +1595,9 @@ Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sa
   const p1 = criarProcesso('Processo A — Aquisição de TI');
   p1.cor = CORES_PRESET[0];
   p1.tags = ['TI', 'Urgente', '2026'];
-
   const p2 = criarProcesso('Processo B — Manutenção Predial');
   p2.cor = CORES_PRESET[2];
   p2.tags = ['Predial', 'Contínuo'];
-
   const p3 = criarProcesso('Processo C — Kits de Merenda');
   p3.cor = CORES_PRESET[1];
   p3.tags = ['Alimentação', 'Escolas'];
@@ -1625,13 +1605,9 @@ Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sa
   (async () => {
     const res = analisarTextoIndividual(exemploA, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto' });
     p1.arquivos.push({
-      id: uid('arq'),
-      nomeArquivo: 'Edital_Pregao_00000.004512-2026.txt',
-      ext: 'txt',
-      tamanho: new Blob([exemploA]).size,
-      texto: exemploA,
-      status: 'ok',
-      ...res,
+      id: uid('arq'), nomeArquivo: 'Edital_Pregao_00000.004512-2026.txt',
+      ext: 'txt', tamanho: new Blob([exemploA]).size,
+      texto: exemploA, status: 'ok', ...res,
     });
     state.ativo = p1.id;
     renderTudo();
@@ -1640,7 +1616,7 @@ Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sa
 }
 
 /* ==========================================================================
- * 18. MENU MOBILE (HAMBÚRGUER)
+ * 18. MENU MOBILE
  * ======================================================================== */
 function abrirSidebar() {
   els.sidebar?.classList.add('is-open');
@@ -1675,17 +1651,12 @@ function bindEventosGlobais() {
     if (e.key === 'Escape') fecharSidebar();
   });
 
-  // Menu mobile
   els.sidebarToggle?.addEventListener('click', () => {
     els.sidebar.classList.contains('is-open') ? fecharSidebar() : abrirSidebar();
   });
   els.sidebarOverlay?.addEventListener('click', fecharSidebar);
-
   els.sidebar?.addEventListener('click', e => {
-    if (window.matchMedia('(max-width: 768px)').matches &&
-        e.target.closest('button, .btn')) {
-      fecharSidebar();
-    }
+    if (window.matchMedia('(max-width: 768px)').matches && e.target.closest('button, .btn')) fecharSidebar();
   });
 
   ['paramObjeto', 'paramModalidade', 'paramCriterio'].forEach(id => {
@@ -1722,7 +1693,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v6.5 · Anti-Overflow Global Fix + Painel Responsivo'
+    '· v6.6 · Motor abrangente + PDF editorial executivo'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
