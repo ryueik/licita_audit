@@ -10,7 +10,7 @@
     content="Ferramenta de auditoria e conformidade para processos licitatórios com base na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT."
   />
 
-  <!-- ===================== Bibliotecas de terceiros (CDN) ===================== -->
+  <!-- Bibliotecas de terceiros (CDN) -->
   <script
     defer
     src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
@@ -27,9 +27,8 @@
 </head>
 
 <body>
-  <!-- ============================ APLICAÇÃO ============================ -->
   <div class="app">
-    <!-- ------------------------------ SIDEBAR ------------------------------ -->
+    <!-- SIDEBAR -->
     <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
       <header class="brand">
         <div class="brand__mark" aria-hidden="true">§</div>
@@ -141,12 +140,11 @@
       </section>
 
       <p class="disclaimer">
-        Ferramenta de apoio à decisão. Não substitui parecer jurídico nem a análise
-        do agente de contratação.
+        Ferramenta de apoio à decisão. Não substitui parecer jurídico nem a análise do agente de contratação.
       </p>
     </aside>
 
-    <!-- ------------------------------- MAIN ------------------------------- -->
+    <!-- MAIN CONTENT -->
     <main class="main">
       <header class="topbar">
         <div class="topbar__title">
@@ -194,12 +192,12 @@
         </ul>
       </section>
 
-      <!-- Relatório (renderizado dinamicamente) -->
+      <!-- Relatório -->
       <div id="report" class="report is-hidden" aria-live="polite"></div>
     </main>
   </div>
 
-  <!-- Overlay de carregamento -->
+  <!-- Overlay de carregamento e Toast -->
   <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
     <div class="loader__box">
       <div class="spinner" aria-hidden="true"></div>
@@ -207,7 +205,6 @@
     </div>
   </div>
 
-  <!-- Toast -->
   <div id="toast" class="toast is-hidden" role="alert"></div>
 </body>
 </html>
