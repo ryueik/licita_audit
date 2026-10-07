@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
-  <meta name="description" content="Ferramenta de auditoria e conformidade para processos licitatórios com base na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT." />
+  <meta name="description" content="Auditoria de conformidade para processos licitatórios com 100 verificações baseadas na Lei nº 14.133/2021. Análise local de PDF, DOCX, DOC e TXT." />
 
   <link
     rel="icon"
@@ -14,11 +14,9 @@
   />
   <link rel="alternate icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
 
-  <!-- PDF.js -->
+  <!-- PDF.js · Mammoth.js · pdfMake -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" referrerpolicy="no-referrer"></script>
-  <!-- Mammoth.js -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" referrerpolicy="no-referrer"></script>
-  <!-- pdfMake -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
 
@@ -33,7 +31,7 @@
         <div class="brand__mark" aria-hidden="true">LA</div>
         <div class="brand__text">
           <h1>LicitaAudit</h1>
-          <p>Conformidade · Lei 14.133/2021</p>
+          <p>100 verificações · Lei 14.133/2021</p>
         </div>
       </header>
 
@@ -41,7 +39,6 @@
       <section class="panel">
         <h2 class="panel__title"><span class="step">1</span> Documentos do processo</h2>
 
-        <!-- ⚠️ IMPORTANTE: input FORA do dropzone para evitar loop de clique -->
         <input
           id="fileInput"
           type="file"
@@ -55,7 +52,7 @@
           class="dropzone"
           role="button"
           tabindex="0"
-          aria-label="Arraste arquivos, clique para selecionar ou cole com Ctrl+V. Enter ou Espaço para abrir o seletor."
+          aria-label="Arraste arquivos, clique para selecionar ou cole com Ctrl+V."
         >
           <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
             <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -72,7 +69,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
               <path d="m21 21-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" stroke-linecap="round" />
             </svg>
-            Analisar conformidade
+            Analisar (100 verificações)
           </button>
           <button id="clearBtn" class="btn btn--ghost" type="button">Limpar</button>
         </div>
@@ -188,17 +185,16 @@
         </div>
         <h3>Comece carregando os documentos do processo</h3>
         <p>
-          Edital, Termo de Referência, Estudo Técnico Preliminar, Projeto Básico,
-          justificativas de dispensa ou inexigibilidade. O texto é extraído
-          <strong>localmente no seu navegador</strong> — nenhum arquivo é enviado a servidores.
+          Edital, TR, ETP, Projeto Básico, justificativas de dispensa ou inexigibilidade.
+          O texto é extraído <strong>localmente no seu navegador</strong> — nenhum arquivo é enviado a servidores.
         </p>
         <ul class="empty-state__tags">
-          <li>Art. 18 · ETP</li>
-          <li>Art. 23 · Estimativa de valor</li>
-          <li>Art. 28 · Modalidades</li>
-          <li>Art. 33 · Critérios de julgamento</li>
-          <li>Art. 55 · Prazos do edital</li>
-          <li>Art. 74 e 75 · Contratação direta</li>
+          <li>100 verificações atômicas</li>
+          <li>6 blocos temáticos</li>
+          <li>Score ponderado</li>
+          <li>Matriz de achados</li>
+          <li>PDF executivo</li>
+          <li>JSON estruturado</li>
         </ul>
       </section>
 
