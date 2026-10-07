@@ -1,18 +1,24 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="dark">
+<html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="color-scheme" content="dark light" />
-  <title>LicitaAudit · Workspaces Multi-Processo · Lei 14.133/2021</title>
-  <meta name="description" content="Auditoria de conformidade para processos licitatórios com workspaces por processo, 30 verificações nucleares condicionais e exportação individual/consolidada." />
+  <meta name="color-scheme" content="light dark" />
+  <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
+  <meta name="description" content="Auditoria de conformidade para processos licitatórios com workspaces por processo e 30 verificações nucleares condicionais." />
 
   <link
     rel="icon"
     type="image/svg+xml"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>"
   />
-  <link rel="alternate icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
 
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" referrerpolicy="no-referrer"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" referrerpolicy="no-referrer"></script>
@@ -25,33 +31,33 @@
 
 <body>
   <div class="app">
+    <!-- ============================ SIDEBAR ============================ -->
     <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
       <header class="brand">
         <div class="brand__mark" aria-hidden="true">LA</div>
         <div class="brand__text">
           <h1>LicitaAudit</h1>
-          <p>Workspaces · Lei 14.133/2021</p>
+          <p>Auditoria de Licitações</p>
         </div>
       </header>
 
-      <!-- 1. Novo processo -->
+      <!-- Ações rápidas -->
       <section class="panel">
-        <h2 class="panel__title"><span class="step">1</span> Processos (Workspaces)</h2>
         <button id="btnNovoProcesso" class="btn btn--primary btn--block" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path d="M12 5v14m-7-7h14" stroke-linecap="round" />
           </svg>
-          Criar Novo Processo
+          Novo Processo
         </button>
 
-        <div class="panel__actions" style="grid-template-columns:1fr;">
-          <button id="btnCarregarExemplo" class="btn btn--ghost" type="button">Carregar Exemplo</button>
-        </div>
+        <button id="btnCarregarExemplo" class="btn btn--ghost btn--block" type="button" style="margin-top:8px;">
+          Carregar Exemplo
+        </button>
       </section>
 
-      <!-- 2. Parâmetros -->
+      <!-- Parâmetros -->
       <section class="panel">
-        <h2 class="panel__title"><span class="step">2</span> Parâmetros da análise</h2>
+        <h2 class="panel__title">Parâmetros</h2>
 
         <label class="field">
           <span class="field__label">Objeto predominante</span>
@@ -86,7 +92,7 @@
             <option value="auto">Detectar automaticamente</option>
             <option value="menor-preco">Menor preço</option>
             <option value="maior-desconto">Maior desconto</option>
-            <option value="melhor-tecnica">Melhor técnica ou conteúdo artístico</option>
+            <option value="melhor-tecnica">Melhor técnica</option>
             <option value="tecnica-preco">Técnica e preço</option>
             <option value="maior-lance">Maior lance</option>
             <option value="maior-retorno">Maior retorno econômico</option>
@@ -94,100 +100,89 @@
         </label>
       </section>
 
-      <!-- 3. Exportação Global -->
-      <section class="panel panel--last">
-        <h2 class="panel__title"><span class="step">3</span> Exportação Global</h2>
-
-        <button id="pdfAllBtn" class="btn btn--soft" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-            <path d="M3 7v10a2 2 0 0 0 2 2h6M3 7a2 2 0 0 1 2-2h6M3 7h8M11 5v14M17 12h4m-2-2v4" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          📦 Exportar PDFs de Todos os Processos
+      <!-- Exportação -->
+      <section class="panel">
+        <h2 class="panel__title">Exportação</h2>
+        <button id="pdfAllBtn" class="btn btn--soft btn--block" type="button">
+          Exportar PDFs (Todos)
         </button>
-
-        <button id="jsonBtn" class="btn btn--soft" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-            <path d="M12 3v12m0 0-4-4m4 4 4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          💾 Exportar JSON da Estrutura
+        <button id="jsonBtn" class="btn btn--soft btn--block" type="button">
+          Salvar JSON
         </button>
-
-        <button id="jsonLoadBtn" class="btn btn--soft" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-            <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          📥 Carregar JSON Salvo
+        <button id="jsonLoadBtn" class="btn btn--soft btn--block" type="button">
+          Carregar JSON
         </button>
         <input id="jsonLoadInput" type="file" accept=".json,application/json" hidden />
       </section>
 
       <p class="disclaimer">
-        Ferramenta de apoio à decisão. Não substitui parecer jurídico nem a análise
-        do agente de contratação.
+        Ferramenta de apoio à decisão. Não substitui parecer jurídico.
       </p>
     </aside>
 
+    <!-- ============================= MAIN ============================= -->
     <main class="main">
+      <!-- Topbar -->
       <header class="topbar">
         <div class="topbar__title">
-          <h2>Painel de Processos</h2>
+          <h2>Painel de Auditoria</h2>
           <p id="topbarSubtitle">Nenhum processo criado</p>
         </div>
         <button
           id="themeToggle"
           class="icon-btn"
           type="button"
-          aria-label="Alternar tema claro/escuro"
+          aria-label="Alternar tema"
           title="Alternar tema"
         >
-          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
             <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
             <circle cx="12" cy="12" r="4" />
             <path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round" />
           </svg>
         </button>
       </header>
 
+      <!-- Tabs de Processos -->
+      <nav id="tabsProcessos" class="tabs" role="tablist" aria-label="Navegação de processos"></nav>
+
       <!-- Estado vazio -->
       <section id="emptyState" class="empty-state">
         <div class="empty-state__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4">
             <path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke-linejoin="round" />
           </svg>
         </div>
-        <h3>Crie seu primeiro Processo (Workspace)</h3>
+        <h3>Comece criando um Processo</h3>
         <p>
-          Organize múltiplos documentos por processo, atribua cores e tags,
-          e analise cada um separadamente ou de forma consolidada.
+          Organize múltiplos documentos por processo (Edital, TR, ETP, etc.),
+          atribua cores e tags, e analise individualmente ou de forma consolidada.
         </p>
-        <ul class="empty-state__tags">
-          <li>Cards por processo</li>
-          <li>Cores e tags customizadas</li>
-          <li>Análise individual e consolidada</li>
-          <li>PDF por arquivo e por processo</li>
-          <li>JSON exportável</li>
-        </ul>
+        <button class="btn btn--primary" id="btnNovoProcessoEmpty" type="button">
+          + Criar Primeiro Processo
+        </button>
       </section>
 
-      <!-- Grid de Processos -->
-      <section id="gridProcessos" class="grid-processos" aria-live="polite"></section>
+      <!-- Workspace do Processo Ativo -->
+      <section id="workspace" class="workspace is-hidden" aria-live="polite"></section>
     </main>
   </div>
 
-  <!-- Modal de detalhes do arquivo -->
-  <div id="modalDetalhes" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
+  <!-- Modal de detalhes -->
+  <div id="modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
     <div class="modal__overlay" data-close-modal></div>
     <div class="modal__box">
       <header class="modal__head">
-        <h3 id="modalTitulo">Detalhes do Arquivo</h3>
+        <h3 id="modalTitulo">Detalhes</h3>
         <button class="modal__close" type="button" data-close-modal aria-label="Fechar">&times;</button>
       </header>
-      <div id="modalConteudo" class="modal__body"></div>
+      <div id="modalBody" class="modal__body"></div>
     </div>
   </div>
 
+  <!-- Loader -->
   <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
     <div class="loader__box">
       <div class="spinner" aria-hidden="true"></div>
@@ -195,6 +190,7 @@
     </div>
   </div>
 
+  <!-- Toast -->
   <div id="toast" class="toast is-hidden" role="alert"></div>
 </body>
 </html>
