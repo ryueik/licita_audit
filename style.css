@@ -1,6 +1,10 @@
 /* ============================================================================
-   LicitaAudit · style.css — v1.1.0
-   Ajustes: truncamento de nome de arquivo, grid auto-fit e responsividade
+   LicitaAudit · style.css — v1.7.0
+   ----------------------------------------------------------------------------
+   • Truncamento de nome de arquivo, grid auto-fit e responsividade
+   • Dashboard Executivo (Índice + Risco) + Ficha Técnica de Metadados
+   • Matriz de Achados e Recomendações (tabela categorizada)
+   • Componentes .risk-card, .score-card, .exec-meta, table.matrix
    ========================================================================== */
 
 /* ----------------------------- Design Tokens ----------------------------- */
@@ -88,7 +92,6 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   transition: background var(--transition), color var(--transition);
-  /* Evita qualquer scroll horizontal acidental vindo de filhos mal-dimensionados */
   overflow-x: hidden;
 }
 
@@ -109,7 +112,7 @@ svg { width: 18px; height: 18px; flex: none; }
 /* -------------------------------- Layout --------------------------------- */
 .app {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr); /* minmax(0) impede overflow */
+  grid-template-columns: 340px minmax(0, 1fr);
   min-height: 100vh;
   max-width: 100%;
 }
@@ -210,7 +213,7 @@ svg { width: 18px; height: 18px; flex: none; }
 
 .file-item {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto; /* minmax(0,1fr) permite truncar */
+  grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   padding: 8px 10px;
@@ -233,7 +236,7 @@ svg { width: 18px; height: 18px; flex: none; }
 }
 .file-item__body {
   display: block;
-  min-width: 0;             /* ESSENCIAL para o ellipsis funcionar em grid */
+  min-width: 0;
   overflow: hidden;
 }
 .file-item__name {
@@ -315,6 +318,7 @@ svg { width: 18px; height: 18px; flex: none; }
 }
 .btn--soft:not(:disabled):hover { border-color: var(--brand); color: var(--brand); }
 .btn--soft:last-of-type { margin-bottom: 0; }
+.btn--block { width: 100%; margin-bottom: 8px; }
 
 .icon-btn {
   width: 38px; height: 38px; border-radius: 50%;
@@ -343,7 +347,7 @@ svg { width: 18px; height: 18px; flex: none; }
   max-width: 1280px;
   width: 100%;
   margin: 0 auto;
-  min-width: 0;  /* impede overflow em grid */
+  min-width: 0;
 }
 
 .topbar {
@@ -394,7 +398,7 @@ svg { width: 18px; height: 18px; flex: none; }
   border: 1px solid var(--border-soft);
   box-shadow: var(--shadow-sm);
   min-width: 0;
-  overflow: hidden;         /* garante que filhos não vazem */
+  overflow: hidden;
 }
 .card__title {
   font-size: 12px; font-weight: 700;
@@ -402,7 +406,7 @@ svg { width: 18px; height: 18px; flex: none; }
   color: var(--text-dim); margin-bottom: 14px;
 }
 
-/* --------- Bloco de evidência do campo extraído (novo) --------- */
+/* --------- Bloco de evidência do campo extraído --------- */
 .field-evidence {
   margin-top: 14px;
   padding: 10px 12px;
@@ -428,7 +432,7 @@ svg { width: 18px; height: 18px; flex: none; }
   word-break: break-word;
 }
 
-/* Card de status principal */
+/* Card de status principal (legado — mantido para compatibilidade) */
 .status-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -479,7 +483,7 @@ svg { width: 18px; height: 18px; flex: none; }
 .badge--danger { color: var(--danger); background: var(--danger-soft); }
 .badge--info   { color: var(--info);   background: var(--info-soft); }
 
-/* --------- Grid responsivo auto-fit (substitui o fixo em 2 colunas) ------- */
+/* --------- Grid responsivo auto-fit --------- */
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -622,6 +626,179 @@ table.checks tbody tr:hover { background: var(--surface-2); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* ============================================================================
+   v1.7.0 · DASHBOARD EXECUTIVO, RISCO E MATRIZ DE ACHADOS
+   ========================================================================== */
+
+/* ---------- Bloco executivo (risco + score) ---------- */
+.exec-dashboard {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+@media (max-width: 900px) {
+  .exec-dashboard { grid-template-columns: 1fr; }
+}
+
+/* Card de risco (grande, colorido) */
+.risk-card {
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 10px;
+  padding: 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+.risk-card::before {
+  content: "";
+  position: absolute; inset: 0 auto 0 0; width: 6px;
+  background: var(--risk-color, var(--brand));
+  box-shadow: 0 0 24px -2px var(--risk-color, var(--brand));
+}
+.risk-card__emoji {
+  font-size: 28px; line-height: 1;
+}
+.risk-card__label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.risk-card__title {
+  font-size: 22px; font-weight: 800; line-height: 1.15;
+  color: var(--risk-color, var(--text));
+}
+.risk-card__desc {
+  font-size: 12.5px; color: var(--text-muted); line-height: 1.55;
+}
+
+/* Card do índice de conformidade */
+.score-card {
+  display: flex; align-items: center; gap: 22px;
+  padding: 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .score-card { flex-direction: column; text-align: center; }
+}
+.score-card__gauge { position: relative; width: 128px; height: 128px; flex: none; }
+.score-card__gauge svg { width: 128px; height: 128px; transform: rotate(-90deg); }
+.score-card__gauge circle { fill: none; stroke-width: 10; stroke-linecap: round; }
+.score-card__gauge .track { stroke: var(--border-soft); }
+.score-card__gauge .value { transition: stroke-dasharray 900ms cubic-bezier(0.4, 0, 0.2, 1); }
+.score-card__number {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 30px; font-weight: 800; letter-spacing: -0.02em;
+}
+.score-card__number small { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+.score-card__legend { min-width: 0; }
+.score-card__legend h3 { font-size: 16px; margin-bottom: 6px; }
+.score-card__legend p { font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
+.score-card__pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 10px; padding: 4px 12px;
+  border-radius: 999px; font-size: 11.5px; font-weight: 700;
+  background: var(--brand-soft); color: var(--brand);
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+/* ---------- Ficha técnica (metadados da auditoria) ---------- */
+.exec-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.exec-meta__item {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  min-width: 0;
+}
+.exec-meta__key {
+  display: block;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.exec-meta__val {
+  display: block;
+  font-size: 13.5px; font-weight: 600; color: var(--text);
+  word-break: break-word;
+}
+
+/* ---------- Matriz de achados (tabela) ---------- */
+.matrix-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  max-width: 100%;
+}
+table.matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 780px;
+}
+table.matrix thead th {
+  position: sticky; top: 0;
+  background: var(--surface-2);
+  text-align: left;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-dim);
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+table.matrix tbody td {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  line-height: 1.55;
+}
+table.matrix tbody tr:last-child td { border-bottom: none; }
+table.matrix tbody tr:hover { background: var(--surface-2); }
+
+.sev-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.04em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.sev-pill--alta  { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); }
+.sev-pill--media { color: var(--warn);   background: var(--warn-soft);   border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+.sev-pill--baixa { color: var(--info);   background: var(--info-soft);   border: 1px solid color-mix(in srgb, var(--info) 40%, transparent); }
+.sev-pill--ok    { color: var(--ok);     background: var(--ok-soft);     border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent); }
+
+.matrix__law {
+  display: inline-block;
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  padding: 2px 8px; border-radius: 6px;
+  margin-top: 4px;
+  word-break: break-word;
+}
+.matrix__rec {
+  margin-top: 6px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.matrix__rec strong { color: var(--text); }
+
 /* ------------------------------ Responsivo ------------------------------- */
 @media (max-width: 1100px) {
   .status-card { grid-template-columns: auto minmax(0, 1fr); }
@@ -645,7 +822,6 @@ table.checks tbody tr:hover { background: var(--surface-2); }
   .main { padding: 22px 18px 48px; }
 }
 
-/* Mobile: transforma a tabela em cards empilhados (opcional) */
 @media (max-width: 640px) {
   .topbar { flex-direction: column; align-items: flex-start; }
   .topbar__title h2 { font-size: 19px; }
@@ -653,8 +829,8 @@ table.checks tbody tr:hover { background: var(--surface-2); }
   .status-card { grid-template-columns: 1fr; justify-items: center; text-align: center; }
   .status-card__info p { margin-inline: auto; }
 
-  /* Reduz drasticamente o min-width para caber em telas pequenas */
   table.checks { min-width: 560px; }
+  table.matrix { min-width: 640px; }
 }
 
 /* --------------------------- Impressão / PDF ----------------------------- */
@@ -667,8 +843,8 @@ table.checks tbody tr:hover { background: var(--surface-2); }
   .card, .empty-state { box-shadow: none; border-color: #ccc; break-inside: avoid; }
   .badge { border: 1px solid currentColor; }
   table.checks thead th { background: #f0f0f0; }
-  .table-wrap { overflow: visible; }
-  table.checks { min-width: 0; }
+  .table-wrap, .matrix-wrap { overflow: visible; }
+  table.checks, table.matrix { min-width: 0; }
 }
 
 /* Acessibilidade: reduz animações */
