@@ -18,7 +18,7 @@
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" referrerpolicy="no-referrer"></script>
   <!-- Mammoth.js -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" referrerpolicy="no-referrer"></script>
-  <!-- pdfMake (relatório oficial) -->
+  <!-- pdfMake -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
 
@@ -41,26 +41,28 @@
       <section class="panel">
         <h2 class="panel__title"><span class="step">1</span> Documentos do processo</h2>
 
+        <!-- ⚠️ IMPORTANTE: input FORA do dropzone para evitar loop de clique -->
+        <input
+          id="fileInput"
+          type="file"
+          multiple
+          accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
+          hidden
+        />
+
         <div
           id="dropzone"
           class="dropzone"
           role="button"
           tabindex="0"
-          aria-label="Arraste arquivos ou pressione Enter para selecionar documentos"
+          aria-label="Arraste arquivos, clique para selecionar ou cole com Ctrl+V. Enter ou Espaço para abrir o seletor."
         >
           <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
             <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round" />
           </svg>
-          <p class="dropzone__title"><strong>Arraste e solte</strong> os arquivos aqui</p>
-          <p class="dropzone__hint">ou clique para selecionar · PDF, DOCX, DOC, TXT</p>
-          <input
-            id="fileInput"
-            type="file"
-            multiple
-            accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
-            hidden
-          />
+          <p class="dropzone__title"><strong>Arraste, clique ou cole</strong> os arquivos aqui</p>
+          <p class="dropzone__hint">PDF, DOCX, DOC, TXT · ou pressione <kbd>Ctrl</kbd>+<kbd>V</kbd></p>
         </div>
 
         <ul id="fileList" class="file-list" aria-live="polite"></ul>
@@ -125,7 +127,7 @@
       <section class="panel panel--last">
         <h2 class="panel__title"><span class="step">3</span> Relatório</h2>
 
-        <button id="pdfBtn" class="btn btn--primary" type="button" disabled>
+        <button id="pdfBtn" class="btn btn--primary btn--block" type="button" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-linejoin="round" />
             <path d="M14 2v6h6M9 13h6M9 17h6" stroke-linecap="round" />
