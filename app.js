@@ -1,9 +1,12 @@
 /* ============================================================================
- * LicitaAudit · app.js — v7.3
+ * LicitaAudit · app.js — v7.4
  * ----------------------------------------------------------------------------
- * • Requerimentos LicitaReq em seção dedicada + botão "Ver Conteúdo"
- * • Visualizador de texto em modal com scroll
- * • Auditoria híbrida · Notas · Critérios · Matriz dinâmica · PDFs
+ * • Classificação automática de documentos em 3 categorias:
+ *     requerimento (LicitaReq, DFD, Memorando)
+ *     minuta       (Edital, TR, ETP, UNITAU_*)
+ *     anexo        (demais documentos)
+ * • Três seções visuais distintas no Workspace
+ * • Auditoria híbrida · Notas · Critérios · Matriz dinâmica · PDFs · Visualizador
  * ========================================================================== */
 'use strict';
 
@@ -40,6 +43,12 @@ const LIMITE_DISPENSA_OBRAS = 100000.00;
 const PESOS = { CRITICA: 5, MEDIA: 2, BAIXA: 0.5 };
 const CORES_PRESET = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#64748b'];
 const AVISO_ORIENTATIVO = 'Nota: Os percentuais de conformidade possuem caráter orientativo e indicativo, servindo prioritariamente para identificar pontos e requisitos indispensáveis da instrução processual. A conferência humana e detalhada dos autos permanece obrigatória.';
+
+const CLASSIFICACAO_TIPOS = {
+  requerimento: { label: 'Requerimento', icon: '⬢', cor: 'licitareq' },
+  minuta:       { label: 'Minuta / Edital', icon: '📄', cor: 'info' },
+  anexo:        { label: 'Anexo', icon: '📎', cor: 'neutral' },
+};
 
 const uid = (p = 'id') => `${p}_${Math.random().toString(36).slice(2, 10)}`;
 const extOf = (n) => (n.split('.').pop() || '').toLowerCase();
@@ -248,30 +257,85 @@ function ehObjetoServicoIntelectual(c) {
 }
 
 /* ==========================================================================
- * 5. PARSER LICITAREQ
+ * 5. CLASSIFICAÇÃO E PARSER DE DOCUMENTOS (v7.4)
+ * --------------------------------------------------------------------------
+ * Três categorias:
+ *   • requerimento  → LicitaReq, DFD, Memorando, Requerimento
+ *   · minuta        → Edital, TR, ETP, Projeto Básico, UNITAU_*
+ *   • anexo         → Demais documentos
  * ======================================================================== */
-const LICITAREQ_SIGNATURES = [
-  /licitareq/i,
-  /requerimento[_\s-]*licitareq/i,
-  /despacho[_\s-]*triagem/i,
-  /motor\s+de\s+regras\s+—\s+lei\s+n[º°]?\s*14\.?133/i,
+
+/* --- Assinaturas textuais fortes (rodapés/cabeçalhos específicos) --- */
+const ASSINATURAS_REQUERIMENTO = [
   /documento\s+gerado\s+eletronicamente\s+pelo\s+sistema\s+licitareq/i,
+  /despacho\s+de\s+triagem\s+e\s+enquadramento\s+legal/i,
+  /documento\s+de\s+formaliza[cç][aã]o\s+de\s+demanda/i,
+  /requerimento\s+licitareq/i,
+  /motor\s+de\s+regras\s+—\s+lei\s+n[º°]?\s*14\.?133/i,
 ];
+
+const ASSINATURAS_MINUTA = [
+  /^\s*(?:minuta\s+de\s+)?edital\s+(?:de\s+)?(?:licita[cç][aã]o|preg[aã]o|concorr[eê]ncia)/im,
+  /termo\s+de\s+refer[eê]ncia\s*(?:-|:|$)/im,
+  /estudo\s+t[eé]cnico\s+preliminar\s*(?:-|:|$)/im,
+  /projeto\s+b[aá]sico\s*(?:-|:|$)/im,
+];
+
+/* --- Padrões de nome (prioridade absoluta) --- */
+const PREFIXOS_REQUERIMENTO = /^(licitareq|dfd|requerimento|memorando|doc[_\s-]*form|documento[_\s-]*de[_\s-]*formaliza)/i;
+const PREFIXOS_MINUTA        = /^(unitau|edital|minuta|termo[_\s-]*ref|tr[_\s-]|etp[_\s-]|projeto[_\s-]*bas|estudo[_\s-]*tec)/i;
+
+const CONTÉM_REQUERIMENTO    = /(licitareq|requerimento|^dfd[_\s-]|documento[_\s-]*de[_\s-]*formaliza)/i;
+const CONTÉM_MINUTA          = /(edital|minuta|unitau|termo[_\s-]*ref|^tr[_\s-]|^etp[_\s-]|estudo[_\s-]*tec|projeto[_\s-]*bas)/i;
+
+/**
+ * Classifica um arquivo em uma das três categorias.
+ * @param {string} nomeArquivo
+ * @param {string} texto
+ * @returns {'requerimento'|'minuta'|'anexo'}
+ */
+function classificarArquivo(nomeArquivo, texto = '') {
+  const nome = String(nomeArquivo || '').toLowerCase();
+  const txt  = String(texto || '');
+
+  /* 1) PRIORIDADE: prefixo do nome do arquivo */
+  if (PREFIXOS_REQUERIMENTO.test(nome)) return 'requerimento';
+  if (PREFIXOS_MINUTA.test(nome))       return 'minuta';
+
+  /* 2) ASSINATURAS DE CONTEÚDO (muito específicas) */
+  if (ASSINATURAS_REQUERIMENTO.some(rx => rx.test(txt))) return 'requerimento';
+  if (ASSINATURAS_MINUTA.some(rx => rx.test(txt)))       return 'minuta';
+
+  /* 3) FALLBACK: termos no nome */
+  const nomeTemReq = CONTÉM_REQUERIMENTO.test(nome);
+  const nomeTemMin = CONTÉM_MINUTA.test(nome);
+  if (nomeTemReq && !nomeTemMin) return 'requerimento';
+  if (nomeTemMin && !nomeTemReq) return 'minuta';
+  if (nomeTemReq && nomeTemMin) {
+    if (/unitau/i.test(nome)) return 'minuta';
+    return 'requerimento';
+  }
+
+  return 'anexo';
+}
+
+/**
+ * @deprecated — use classificarArquivo()
+ */
+function ehArquivoLicitaReq(nomeArquivo, texto = '') {
+  return classificarArquivo(nomeArquivo, texto) === 'requerimento';
+}
+
+/* --- Parser de metadados do LicitaReq --- */
 const LICITAREQ_KEYWORDS = {
   unidade:    /(?:unidade\s+requisitante|setor\s+requisitante|remetente|origem)\s*[:\-–—]\s*([^\n]{3,90})/i,
   valor:      /R\$\s*([\d]{1,3}(?:\.\d{3})*(?:,\d{1,2})?)/i,
   objeto:     /(?:objeto|assunto)\s*[:\-–—]\s*([^\n]{6,200})/i,
-  objetoFull: /(?:objeto|assunto)\s*[:\\-–—]\s*([\s\S]{6,600}?)(?=\n\s*\n|\n\s*\d+\.|\n\s*---|$)/i,
+  objetoFull: /(?:objeto|assunto)\s*[:\-–—]\s*([\s\S]{6,600}?)(?=\n\s*\n|\n\s*\d+\.|\n\s*---|$)/i,
   emergencia: /(emerg[êe]ncial?|calamidade|desastre|risco\s+iminente|paralisa[çc][ãa]o)/i,
   inexigib:   /(inexigibilidade|not[óo]ria\s+especializa|exclusividade|inviabilidade\s+de\s+competi)/i,
   direc:      /(?:empresa|fornecedor|contrata[çc][aã]o\s+d[aeo]|junto\s+[àa])\s+([A-ZÀ-Ú][\wÀ-ú&.'-]*(?:\s+(?:[A-ZÀ-Ú][\wÀ-ú&.'-]*|de|da|do|e)){0,6}(?:\s+(?:Ltda\.?|S\.A\.?|ME|EIRELI|EPP))?)/i,
 };
-
-function ehArquivoLicitaReq(nomeArquivo, texto = '') {
-  if (LICITAREQ_SIGNATURES.some(rx => rx.test(nomeArquivo))) return true;
-  if (!texto) return false;
-  return LICITAREQ_SIGNATURES.some(rx => rx.test(texto));
-}
 
 function parseLicitaReq(texto) {
   const out = {
@@ -329,7 +393,7 @@ const MATRIZ_CORE_30 = [
     mensagemFalha:'Sem decisão sobre parcelamento.', recomendacao:'Motivar parcelamento ou indivisibilidade.' },
   { id:'B1_06', bloco:1, nome:'Formalização da demanda (LicitaReq)', fundamento:'Art. 18, §§1º e 2º', severidade:'MEDIA',
     aplicavel: () => true,
-    test: c => c.arquivo?.licitareq || /(documento\s+de\s+formaliza[çc][aã]o\s+de\s+demanda|\bDFD\b|memorando\s+n|requerimento)/i.test(c.corpus),
+    test: c => c.arquivo?.tipo === 'requerimento' || /(documento\s+de\s+formaliza[çc][aã]o\s+de\s+demanda|\bDFD\b|memorando\s+n|requerimento)/i.test(c.corpus),
     mensagemFalha:'Formalização da demanda não identificada.', recomendacao:'Anexar DFD ou Memorando (Art. 18, §§1º e 2º).' },
 
   { id:'B2_01', bloco:2, nome:'Estimativa de valor', fundamento:'Art. 23', severidade:'CRITICA', aplicavel:()=>true, test:c=>c.meta.valor > 0 || firstMatch(c.corpus, KB.orcamento) || !!(c.licitareq?.valor > 0), mensagemFalha:'Estimativa de valor ausente.', recomendacao:'Elaborar planilha orçamentária.' },
@@ -420,7 +484,7 @@ const MATRIZ_CORE_30 = [
   { id:'B4_05', bloco:4, nome:'Notória especialização (serviços intelectuais)', fundamento:'Arts. 74, III e 6º, XVIII', severidade:'MEDIA',
     aplicavel: c => ehObjetoServicoIntelectual(c),
     motivoNA: 'Aplicável a serviços predominantemente intelectuais.',
-    test: c => /(not[oó]ria\s+especializa|intelectual|singularidade|inconfundibilidade|confian[cç]a)/i.test(c.corpus),
+    test: c => /(not[óo]ria\s+especializa|intelectual|singularidade|inconfundibilidade|confian[cç]a)/i.test(c.corpus),
     mensagemFalha:'Notória especialização não caracterizada.', recomendacao:'Comprovar notória especialização.' },
 
   { id:'B5_01', bloco:5, nome:'Prazo mínimo de publicidade', fundamento:'Art. 55', severidade:'CRITICA', aplicavel:()=>true, test:c=>{
@@ -470,7 +534,7 @@ function executarAuditoriaArquivo(corpus, meta, natureza, modalidade, criterio, 
     let aplicavel = false;
     try { aplicavel = !!regra.aplicavel(ctx); } catch (_) { aplicavel = true; }
     if (!aplicavel) {
-      return { ...regra, peso: PESOS[regra.severidade], aplicavel: false, conforme: null, status: 'N/A', motivoNA: regra.motivoNA || 'Regra não aplicável à combinação declarada.' };
+      return { ...regra, peso: PESOS[regra.severidade], aplicavel: false, conforme: null, status: 'N/A', motivoNA: regra.motivoNA || 'Regra não aplicável.' };
     }
     let conforme = false;
     try { conforme = !!regra.test(ctx); } catch (_) { conforme = false; }
@@ -555,7 +619,9 @@ function nivelConformidade(pct) {
  * ======================================================================== */
 function analisarTextoIndividual(corpus, opts = {}) {
   const nomeArquivo = opts.nomeArquivo || '';
-  const licitareq = ehArquivoLicitaReq(nomeArquivo, corpus) ? parseLicitaReq(corpus) : null;
+  const tipoArquivo = classificarArquivo(nomeArquivo, corpus);
+  const licitareq = tipoArquivo === 'requerimento' ? parseLicitaReq(corpus) : null;
+
   const metaBase = {
     modalidade: extrairModalidade(corpus),
     objeto:     extrairObjeto(corpus),
@@ -564,6 +630,7 @@ function analisarTextoIndividual(corpus, opts = {}) {
     orgao:      extrairOrgao(corpus),
     empresa:    corpus.match(KB.empresa)?.[0]?.trim() || licitareq?.empresa || null,
   };
+
   if (licitareq) {
     if (!metaBase.processo || metaBase.processo === 'Não identificado') metaBase.processo = licitareq.processo || 'Não identificado';
     if (!metaBase.valor && licitareq.valor) metaBase.valor = licitareq.valor;
@@ -572,6 +639,7 @@ function analisarTextoIndividual(corpus, opts = {}) {
       metaBase.objeto.tipo = classificarObjeto(licitareq.objeto);
     }
   }
+
   const naturezaBase = classificarNatureza(corpus, opts.paramObjeto || 'auto');
   const modalidadeLabel = (opts.paramModalidade && opts.paramModalidade !== 'auto')
     ? labelModalidade(opts.paramModalidade) : metaBase.modalidade.rotulo;
@@ -579,13 +647,20 @@ function analisarTextoIndividual(corpus, opts = {}) {
     ? opts.paramCriterio : extrairCriterio(corpus);
   const tipoObjeto = classificarTipoObjeto({ objeto: metaBase.objeto, natureza: naturezaBase });
   const meta = { ...metaBase, natureza: naturezaBase, modalidade: modalidadeLabel, criterio, tipoObjeto };
-  const auditoria = executarAuditoriaArquivo(corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio, licitareq, { licitareq: !!licitareq, nome: nomeArquivo });
+
+  const auditoria = executarAuditoriaArquivo(
+    corpus, meta, naturezaBase, { modalidade: modalidadeLabel }, criterio,
+    licitareq, { tipo: tipoArquivo, nome: nomeArquivo, licitareq: !!licitareq }
+  );
+
   const objetoExibicao = (meta.objeto.texto && meta.objeto.texto.trim().length >= 5
     ? meta.objeto.texto.trim().slice(0, 200)
     : meta.objeto.tipo || 'Não identificado');
+
   return {
     score: auditoria.score, risco: auditoria.risco,
     licitareq,
+    tipoArquivo,
     identificacao: {
       objeto: objetoExibicao, objetoTipo: meta.objeto.tipo,
       modalidade: meta.modalidade, natureza: meta.natureza, criterio,
@@ -679,11 +754,18 @@ function excluirProcesso(procId) {
 }
 function getProcessoAtivo() { return state.processos.find(p => p.id === state.ativo) || null; }
 
-/* ---------- Separação LicitaReq × Documentos comuns ---------- */
+/* ---------- Separação por tipo ---------- */
 function separarArquivosProcesso(processo) {
-  const licitareq = processo.arquivos.filter(a => a.licitareq);
-  const comuns    = processo.arquivos.filter(a => !a.licitareq);
-  return { licitareq, comuns };
+  const requerimento = [];
+  const minuta       = [];
+  const anexo        = [];
+  processo.arquivos.forEach(a => {
+    const t = a.tipo || classificarArquivo(a.nomeArquivo, a.texto || '');
+    if (t === 'requerimento') requerimento.push(a);
+    else if (t === 'minuta')  minuta.push(a);
+    else                      anexo.push(a);
+  });
+  return { requerimento, minuta, anexo };
 }
 
 /* ---------- Perfil ---------- */
@@ -711,9 +793,7 @@ function getPerfilProcesso(processo) {
       natureza: overrideNat || 'auto',
       criterio: overrideCri || 'auto',
     },
-    _auto: {
-      modalidade: !modFinal, natureza: !natFinal, criterio: !criFinal,
-    },
+    _auto: { modalidade: !modFinal, natureza: !natFinal, criterio: !criFinal },
   };
 }
 
@@ -729,33 +809,47 @@ async function adicionarArquivos(procId, fileList) {
   const paramObjeto     = p.metadados?.natureza  !== 'auto' ? p.metadados.natureza  : els.paramObjeto.value;
   const paramModalidade = p.metadados?.modalidade !== 'auto' ? p.metadados.modalidade : els.paramModalidade.value;
   const paramCriterio   = p.metadados?.criterio   !== 'auto' ? p.metadados.criterio   : els.paramCriterio.value;
+
   for (const file of files) {
     const entry = {
       id: uid('arq'), nomeArquivo: file.name, ext: extOf(file.name),
-      tamanho: file.size, texto: '', status: 'loading', erro: null, licitareq: false, _ref: file,
+      tamanho: file.size, texto: '', status: 'loading', erro: null,
+      licitareq: false, tipo: classificarArquivo(file.name, ''), _ref: file,
     };
     p.arquivos.push(entry);
     renderWorkspace();
+
     try {
       entry.texto = await extractFileText(entry._ref);
       entry.status = 'ok';
-      const res = analisarTextoIndividual(entry.texto, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: file.name });
+      const res = analisarTextoIndividual(entry.texto, {
+        paramObjeto, paramModalidade, paramCriterio,
+        nomeArquivo: file.name,
+      });
       Object.assign(entry, res);
-      entry.licitareq = !!res.licitareq;
+      entry.tipo = res.tipoArquivo;
+      entry.licitareq = res.tipoArquivo === 'requerimento';
     } catch (err) {
       entry.status = 'erro';
       entry.erro = err.message || 'Erro ao processar.';
+      entry.tipo = classificarArquivo(file.name, '');
     } finally {
       delete entry._ref;
       renderWorkspace();
     }
   }
   hideLoader();
-  const lrCount = files.filter(f => ehArquivoLicitaReq(f.name)).length;
-  const msg = lrCount > 0
-    ? `${files.length} arquivo(s) adicionado(s) — ${lrCount} do LicitaReq.`
-    : `${files.length} arquivo(s) adicionado(s).`;
-  toast(msg, lrCount > 0 ? 'info' : 'ok');
+
+  const counts = files.reduce((acc, f) => {
+    const t = classificarArquivo(f.name, '');
+    acc[t] = (acc[t] || 0) + 1;
+    return acc;
+  }, {});
+  const partes = [`${files.length} arquivo(s) adicionado(s)`];
+  if (counts.requerimento) partes.push(`${counts.requerimento} requerimento(s)`);
+  if (counts.minuta)       partes.push(`${counts.minuta} minuta(s)/edital(is)`);
+  if (counts.anexo)        partes.push(`${counts.anexo} anexo(s)`);
+  toast(partes.join(' · '), 'ok');
 }
 function removerArquivo(procId, arqId) {
   const p = state.processos.find(x => x.id === procId);
@@ -791,7 +885,7 @@ function renderTabs() {
     const ativo = p.id === state.ativo;
     const risco = calcularRiscoProcesso(p.arquivos);
     const corRisco = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
-    const temLR = p.arquivos.some(a => a.licitareq);
+    const temLR = p.arquivos.some(a => a.tipo === 'requerimento');
     return `
       <button class="tab ${ativo ? 'is-active' : ''}" role="tab" aria-selected="${ativo}"
               data-tab-proc="${p.id}" title="${escapeHtml(p.nome)}"
@@ -835,7 +929,7 @@ function renderAchadosConsolidados(arquivos) {
   const todos = [];
   arquivos.filter(a => a.status === 'ok' && Array.isArray(a.resultados)).forEach(a => {
     a.resultados.filter(r => r.aplicavel && !r.conforme).forEach(r => {
-      todos.push({ arquivo: a.nomeArquivo, id: r.id, bloco: r.bloco, nome: r.nome, fundamento: r.fundamento, severidade: r.severidade });
+      todos.push({ arquivo: a.nomeArquivo, id: r.id, bloco: r.bloco, nome: r.nome, fundamento: r.fundamento, severidade: r.severidade, tipo: a.tipo });
     });
   });
   const ordem = { CRITICA: 0, MEDIA: 1, BAIXA: 2 };
@@ -861,18 +955,19 @@ function renderAchadosConsolidados(arquivos) {
     </div>`;
 }
 
-/* ---------- NOVO: Render da SEÇÃO LICITAREQ dedicada ---------- */
-function renderSecaoLicitaReq(processo, arquivosLR) {
-  if (!arquivosLR.length) {
+/* ---------- SEÇÃO LICITAREQ (Requerimentos) ---------- */
+function renderSecaoLicitaReq(processo, arquivosReq) {
+  const count = arquivosReq.length;
+  if (count === 0) {
     return `
       <section class="ws-licitareq">
         <header class="ws-licitareq__head">
-          <span class="ws-licitareq__title">Requerimentos / DFD / LicitaReq</span>
+          <span class="ws-licitareq__title">Requerimento / LicitaReq</span>
           <span class="ws-licitareq__count">0</span>
         </header>
         <p class="ws-licitareq__empty">
-          Nenhum requerimento ou DFD anexado — arraste abaixo um <strong>Requerimento LicitaReq</strong>,
-          <strong>DFD</strong> ou <strong>Despacho de Triagem</strong> para auditar a formalização da demanda.
+          Nenhum requerimento anexado — arraste um <strong>Requerimento LicitaReq</strong>,
+          <strong>DFD</strong> ou <strong>Despacho de Triagem</strong> para auditar a formalização.
         </p>
         <div class="ws-licitareq__actions">
           <button class="btn btn--licitareq" data-drop-req="${processo.id}" type="button">
@@ -882,7 +977,7 @@ function renderSecaoLicitaReq(processo, arquivosLR) {
       </section>`;
   }
 
-  const itens = arquivosLR.map(a => {
+  const itens = arquivosReq.map(a => {
     const score = a.status === 'ok' && typeof a.score === 'number'
       ? `${a.score.toFixed(1)}%` : (a.status === 'erro' ? 'Erro' : '…');
     const risco = a.risco || '—';
@@ -911,10 +1006,8 @@ function renderSecaoLicitaReq(processo, arquivosLR) {
           </div>
         </div>
         <div class="req-item__actions">
-          <button class="btn-view-content" data-view-text="${a.id}" data-proc="${processo.id}" type="button" title="Ler o conteúdo textual deste requerimento">
-            📖 Ver Conteúdo
-          </button>
-          <button class="btn-icon" data-view-arq="${a.id}" data-proc="${processo.id}" title="Detalhes da análise" ${a.status !== 'ok' ? 'disabled' : ''}>👁️</button>
+          <button class="btn-view-content" data-view-text="${a.id}" data-proc="${processo.id}" type="button" title="Ler conteúdo do requerimento">📖 Ver Conteúdo</button>
+          <button class="btn-icon" data-view-arq="${a.id}" data-proc="${processo.id}" title="Detalhes" ${a.status !== 'ok' ? 'disabled' : ''}>👁️</button>
           <button class="btn-icon" data-pdf-arq="${a.id}" data-proc="${processo.id}" title="PDF individual" ${a.status !== 'ok' ? 'disabled' : ''}>📄</button>
           <button class="btn-icon danger" data-del-arq="${a.id}" data-proc="${processo.id}" title="Remover">🗑</button>
         </div>
@@ -924,14 +1017,47 @@ function renderSecaoLicitaReq(processo, arquivosLR) {
   return `
     <section class="ws-licitareq">
       <header class="ws-licitareq__head">
-        <span class="ws-licitareq__title">Requerimentos / DFD / LicitaReq</span>
-        <span class="ws-licitareq__count">${arquivosLR.length}</span>
+        <span class="ws-licitareq__title">Requerimento / LicitaReq</span>
+        <span class="ws-licitareq__count">${count}</span>
       </header>
       <div class="ws-licitareq__list">${itens}</div>
       <div class="ws-licitareq__actions">
         <button class="btn btn--licitareq btn--sm" data-drop-req="${processo.id}" type="button">
           ⬆ Anexar outro Requerimento / DFD
         </button>
+      </div>
+    </section>`;
+}
+
+/* ---------- SEÇÃO MINUTAS / EDITAIS ---------- */
+function renderSecaoMinutas(processo, arquivosMinuta) {
+  const count = arquivosMinuta.length;
+  return `
+    <section class="ws-minutas">
+      <header class="ws-minutas__head">
+        <span class="ws-minutas__title">Minutas e Editais do Processo</span>
+        <span class="ws-minutas__count">${count}</span>
+      </header>
+      ${count === 0
+        ? `<p class="ws-minutas__empty">
+             Nenhuma minuta, edital ou TR anexado — documentos do LicitaReq aparecem em sua seção própria.
+           </p>`
+        : `<div class="tabela-responsive-wrapper"><table class="tabela-arquivos">
+            <thead><tr>
+              <th class="col-arquivo">Arquivo</th>
+              <th class="col-score">Conformidade</th>
+              <th class="col-risco">Risco</th>
+              <th class="col-acoes">Ações</th>
+            </tr></thead>
+            <tbody>${arquivosMinuta.map(a => renderLinhaArquivo(processo.id, a, 'minuta')).join('')}</tbody>
+          </table></div>`}
+      <div class="ws-dropzone" data-drop="${processo.id}" tabindex="0" role="button">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round"/>
+        </svg>
+        <p>Arraste <strong>Editais, Minutas, TRs, ETPs</strong> aqui ou clique para selecionar</p>
+        <p style="font-size:11.5px;color:var(--text-dim);">Prefixos <code>UNITAU_</code>, <code>Edital</code>, <code>Minuta</code>, <code>TR_</code>, <code>ETP_</code> são alocados automaticamente aqui.</p>
       </div>
     </section>`;
 }
@@ -945,7 +1071,11 @@ function renderWorkspace() {
   const riscoConsolidado = calcularRiscoProcesso(p.arquivos);
   const arquivosOk = p.arquivos.filter(a => a.status === 'ok');
   const perfil = getPerfilProcesso(p);
-  const { licitareq: arquivosLR, comuns: arquivosComuns } = separarArquivosProcesso(p);
+
+  const grupos = separarArquivosProcesso(p);
+  const arquivosLR      = grupos.requerimento;
+  const arquivosMinuta  = grupos.minuta;
+  const arquivosAnexos  = grupos.anexo;
 
   const corRisco = riscoConsolidado === 'ALTO' ? 'var(--danger)'
                  : riscoConsolidado === 'MÉDIO' ? 'var(--warn)'
@@ -1038,18 +1168,20 @@ function renderWorkspace() {
         </div>
       </section>
 
-      <!-- ★ SEÇÃO LICITAREQ DEDICADA -->
+      <!-- ★ SEÇÃO LICITAREQ -->
       ${renderSecaoLicitaReq(p, arquivosLR)}
 
-      <!-- Documentos comuns -->
-      <section class="ws-secao">
-        <header class="ws-secao__head">
-          <span class="ws-secao__title">Documentos do Processo</span>
-          <span class="ws-secao__count">${arquivosComuns.length}</span>
-        </header>
+      <!-- ★ SEÇÃO MINUTAS / EDITAIS -->
+      ${renderSecaoMinutas(p, arquivosMinuta)}
 
-        ${arquivosComuns.length === 0
-          ? `<p style="padding:1.25rem 1.1rem;color:var(--text-dim);font-size:13px;font-style:italic;text-align:center;">Nenhum documento comum adicionado — use a área abaixo para enviar arquivos.</p>`
+      <!-- ★ SEÇÃO ANEXOS COMPLEMENTARES -->
+      <section class="ws-anexos">
+        <header class="ws-anexos__head">
+          <span class="ws-anexos__title">Anexos Complementares</span>
+          <span class="ws-anexos__count">${arquivosAnexos.length}</span>
+        </header>
+        ${arquivosAnexos.length === 0
+          ? `<p class="ws-anexos__empty">Nenhum documento complementar anexado.</p>`
           : `<div class="tabela-responsive-wrapper"><table class="tabela-arquivos">
               <thead><tr>
                 <th class="col-arquivo">Arquivo</th>
@@ -1057,26 +1189,11 @@ function renderWorkspace() {
                 <th class="col-risco">Risco</th>
                 <th class="col-acoes">Ações</th>
               </tr></thead>
-              <tbody>${arquivosComuns.map(a => renderLinhaArquivo(p.id, a)).join('')}</tbody>
+              <tbody>${arquivosAnexos.map(a => renderLinhaArquivo(p.id, a, 'anexo')).join('')}</tbody>
             </table></div>`}
-
-        <div class="ws-dropzone" data-drop="${p.id}" tabindex="0" role="button">
-          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round"/>
-          </svg>
-          <p>Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
-          <p style="font-size:11.5px;color:var(--text-dim);">PDF · DOCX · DOC · TXT</p>
-          <p class="ws-dropzone__licitareq">⬢ Arquivos LicitaReq são direcionados à seção dedicada acima</p>
-        </div>
-
-        <div class="ws-actions">
-          <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>📄 Relatório Consolidado (PDF)</button>
-          <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>💾 Salvar este Processo (JSON)</button>
-        </div>
       </section>
 
-      <!-- Notas -->
+      <!-- Notas do Auditor -->
       <section class="ws-notas">
         <header class="ws-notas__head">
           <span class="ws-notas__title">
@@ -1128,6 +1245,27 @@ function renderWorkspace() {
           ${renderAchadosConsolidados(arquivosOk)}
         </section>` : ''}
 
+      <!-- Ações do Processo -->
+      <section class="ws-secao">
+        <header class="ws-secao__head">
+          <span class="ws-secao__title">Ações do Processo</span>
+        </header>
+        <div class="ws-dropzone" data-drop="${p.id}" tabindex="0" role="button">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 15v2.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke-linecap="round"/>
+          </svg>
+          <p>Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
+          <p style="font-size:11.5px;color:var(--text-dim);">PDF · DOCX · DOC · TXT</p>
+          <p class="ws-dropzone__licitareq">⬢ Classificação automática: <b>LicitaReq/DFD/Requerimento</b> → seção de Requerimento · <b>Edital/Minuta/TR/ETP/UNITAU_</b> → seção de Minutas</p>
+        </div>
+        <div class="ws-actions">
+          <button class="btn btn--primary" data-pdf-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>📄 Relatório Consolidado (PDF)</button>
+          <button class="btn btn--soft" data-json-proc="${p.id}" type="button" ${totalArquivos === 0 ? 'disabled' : ''}>💾 Salvar este Processo (JSON)</button>
+        </div>
+      </section>
+
+      <!-- Aviso -->
       <div class="aviso-orientativo" role="note">
         <strong>Nota</strong>
         <span>${escapeHtml(AVISO_ORIENTATIVO.replace(/^Nota:\s*/, ''))}</span>
@@ -1139,19 +1277,28 @@ function renderWorkspace() {
   animarGauge();
 }
 
-function renderLinhaArquivo(procId, arq) {
+function renderLinhaArquivo(procId, arq, tipoOverride = null) {
+  const tipo = tipoOverride || arq.tipo || classificarArquivo(arq.nomeArquivo, arq.texto || '');
   const score = arq.status === 'ok' && typeof arq.score === 'number' ? `${arq.score.toFixed(1)}%` : (arq.status === 'erro' ? 'Erro' : '…');
   const risco = arq.risco || '—';
   const badgeCls = risco === 'ALTO' ? 'badge--alto' : risco === 'MÉDIO' ? 'badge--medio' : risco === 'BAIXO' ? 'badge--baixo' : 'badge--neutro';
   const emoji = risco === 'ALTO' ? '🔴' : risco === 'MÉDIO' ? '🟡' : risco === 'BAIXO' ? '🟢' : '⚪';
   const corScore = risco === 'ALTO' ? 'var(--danger)' : risco === 'MÉDIO' ? 'var(--warn)' : risco === 'BAIXO' ? 'var(--ok)' : 'var(--text-dim)';
+
+  const extClass = tipo === 'requerimento' ? 'arquivo-ext--licitareq'
+                 : tipo === 'minuta' ? 'arquivo-ext--minuta' : '';
+  const tipoLabel = CLASSIFICACAO_TIPOS[tipo]?.label || 'Anexo';
+
   return `
-    <tr>
+    <tr data-tipo="${tipo}">
       <td data-label="Arquivo">
         <div class="arquivo-nome">
-          <span class="arquivo-ext">${escapeHtml(arq.ext || 'ARQ')}</span>
+          <span class="arquivo-ext ${extClass}">${escapeHtml(arq.ext || 'ARQ')}</span>
           <span class="arquivo-nome__txt">
-            <strong title="${escapeHtml(arq.nomeArquivo)}">${escapeHtml(truncate(arq.nomeArquivo, 40))}</strong>
+            <strong title="${escapeHtml(arq.nomeArquivo)}">
+              ${escapeHtml(truncate(arq.nomeArquivo, 40))}
+              <span class="arquivo-badge-tipo" data-tipo="${tipo}">${tipoLabel}</span>
+            </strong>
             <small>${formatBytes(arq.tamanho || 0)}${arq.status === 'erro' ? ' · ' + escapeHtml(arq.erro || 'Erro') : ''}</small>
           </span>
         </div>
@@ -1160,8 +1307,8 @@ function renderLinhaArquivo(procId, arq) {
       <td class="col-risco" data-label="Risco"><span class="badge ${badgeCls}">${emoji} ${risco}</span></td>
       <td data-label="Ações">
         <div class="arquivo-acoes">
-          <button class="btn-view-text" data-view-text="${arq.id}" data-proc="${procId}" title="Ver conteúdo do arquivo" ${arq.status === 'erro' ? 'disabled' : ''}>📖</button>
-          <button class="btn-icon" data-view-arq="${arq.id}" data-proc="${procId}" title="Detalhes da análise" ${arq.status !== 'ok' ? 'disabled' : ''}>👁️</button>
+          <button class="btn-view-text" data-view-text="${arq.id}" data-proc="${procId}" title="Ver conteúdo" ${arq.status === 'erro' ? 'disabled' : ''}>📖</button>
+          <button class="btn-icon" data-view-arq="${arq.id}" data-proc="${procId}" title="Detalhes" ${arq.status !== 'ok' ? 'disabled' : ''}>👁️</button>
           <button class="btn-icon" data-pdf-arq="${arq.id}" data-proc="${procId}" title="PDF individual" ${arq.status !== 'ok' ? 'disabled' : ''}>📄</button>
           <button class="btn-icon danger" data-del-arq="${arq.id}" data-proc="${procId}" title="Excluir">🗑</button>
         </div>
@@ -1242,9 +1389,8 @@ function bindEventosWorkspace() {
   els.workspace.querySelector('[data-delete-proc]')?.addEventListener('click', e => excluirProcesso(e.currentTarget.dataset.deleteProc));
   els.workspace.querySelector('[data-criterios-proc]')?.addEventListener('click', e => abrirModalCriterios(e.currentTarget.dataset.criteriosProc));
 
-  /* Botão "Anexar Requerimento / DFD" da seção LicitaReq */
   els.workspace.querySelectorAll('[data-drop-req]').forEach(btn => {
-    btn.addEventListener('click', () => abrirInput(btn.dataset.dropReq, { licitareq: true }));
+    btn.addEventListener('click', () => abrirInput(btn.dataset.dropReq));
   });
 
   els.workspace.querySelector('[data-add-tag]')?.addEventListener('click', e => {
@@ -1278,9 +1424,11 @@ function bindEventosWorkspace() {
     const p = state.processos.find(x => x.id === e.currentTarget.dataset.jsonProc);
     if (p) exportarJSON([p]);
   });
-  const dz = els.workspace.querySelector('[data-drop]');
-  if (dz) {
+  const dzs = els.workspace.querySelectorAll('[data-drop]');
+  dzs.forEach(dz => {
     const procId = dz.dataset.drop;
+    if (dz.dataset.bound === '1') return;
+    dz.dataset.bound = '1';
     dz.addEventListener('click', () => abrirInput(procId));
     dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirInput(procId); } });
     ['dragenter','dragover'].forEach(evt => dz.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); dz.classList.add('is-dragover'); }));
@@ -1293,7 +1441,7 @@ function bindEventosWorkspace() {
       const files = e.dataTransfer?.files;
       if (files?.length) adicionarArquivos(procId, files);
     });
-  }
+  });
 }
 
 function reanalisarProcesso(processo) {
@@ -1304,11 +1452,13 @@ function reanalisarProcesso(processo) {
     if (a.status === 'ok' && a.texto) {
       const res = analisarTextoIndividual(a.texto, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: a.nomeArquivo });
       Object.assign(a, res);
+      a.tipo = res.tipoArquivo;
+      a.licitareq = res.tipoArquivo === 'requerimento';
     }
   });
 }
 
-function abrirInput(procId, opts = {}) {
+function abrirInput(procId) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true;
   inp.accept = '.pdf,.doc,.docx,.txt,.md,application/pdf,text/plain';
@@ -1326,6 +1476,8 @@ function abrirModalArquivo(procId, arqId) {
   const p = state.processos.find(x => x.id === procId);
   const a = p?.arquivos.find(x => x.id === arqId);
   if (!a || a.status !== 'ok') { toast('Detalhes não disponíveis.', 'error'); return; }
+  const tipo = a.tipo || classificarArquivo(a.nomeArquivo, a.texto || '');
+  const tipoLabel = CLASSIFICACAO_TIPOS[tipo]?.label || 'Anexo';
   const emoji = a.risco === 'ALTO' ? '🔴' : a.risco === 'MÉDIO' ? '🟡' : a.risco === 'BAIXO' ? '🟢' : '⚪';
   const corScore = a.risco === 'ALTO' ? 'var(--danger)' : a.risco === 'MÉDIO' ? 'var(--warn)' : 'var(--ok)';
   const id = a.identificacao || {}, st = a.estatisticas || {};
@@ -1356,7 +1508,7 @@ function abrirModalArquivo(procId, arqId) {
       <div class="achado__body" style="font-style:italic;">${escapeHtml(r.motivoNA || 'Regra não aplicável.')}</div>
     </div>`).join('');
 
-  const licitareqBloco = a.licitareq ? `
+  const licitareqBloco = (tipo === 'requerimento' && a.licitareq) ? `
     <div class="licitareq-info" style="margin: 0 0 var(--sp-4) 0;">
       <strong>⬢ Arquivo LicitaReq reconhecido</strong>
       <div class="licitareq-info__fields">
@@ -1369,18 +1521,18 @@ function abrirModalArquivo(procId, arqId) {
       </div>
     </div>` : '';
 
-  els.modalTitulo.textContent = a.nomeArquivo;
+  els.modalTitulo.textContent = `${CLASSIFICACAO_TIPOS[tipo]?.icon || ''} ${a.nomeArquivo}`;
   els.modalBody.innerHTML = `
     ${licitareqBloco}
     <div class="detalhe-score">
       <div class="detalhe-score__numero" style="color:${corScore};">${a.score.toFixed(1)}%</div>
       <div class="detalhe-score__info">
-        <strong>${emoji} Risco ${a.risco}</strong>
+        <strong>${emoji} Risco ${a.risco} · <span class="arquivo-badge-tipo" data-tipo="${tipo}">${tipoLabel}</span></strong>
         <p>${st.ok || 0} conformes · ${st.falha || 0} inconformidades (${st.criticas || 0} críticas · ${st.medias || 0} médias · ${st.baixas || 0} baixas)</p>
         <p>${st.aplicaveis || 0} aplicáveis · ${st.ignoradas || 0} N/A de ${st.total || 0} totais</p>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn--licitareq btn--sm" id="btnVerTextoModal" type="button">📖 Ver Texto do Arquivo</button>
+        <button class="btn btn--licitareq btn--sm" id="btnVerTextoModal" type="button">📖 Ver Texto</button>
         <button class="btn btn--primary btn--sm" id="btnPdfModal" type="button">📄 PDF Individual</button>
       </div>
     </div>
@@ -1505,6 +1657,9 @@ function abrirModalVisualizador(procId, arqId) {
   const a = p?.arquivos.find(x => x.id === arqId);
   if (!a) { toast('Arquivo não encontrado.', 'error'); return; }
 
+  const tipo = a.tipo || classificarArquivo(a.nomeArquivo, a.texto || '');
+  const tipoLabel = CLASSIFICACAO_TIPOS[tipo]?.label || 'Anexo';
+  const tipoIcon = CLASSIFICACAO_TIPOS[tipo]?.icon || '📎';
   const texto = (a.texto || '').toString();
   const conteudo = texto.length > 0
     ? texto
@@ -1512,9 +1667,9 @@ function abrirModalVisualizador(procId, arqId) {
         ? `⚠️ Este arquivo não pôde ser processado.\n\nMotivo: ${a.erro || 'erro desconhecido'}`
         : '(Nenhum conteúdo textual disponível para este arquivo.)');
 
-  els.modalVizTitulo.textContent = `Visualização — ${a.nomeArquivo}`;
+  els.modalVizTitulo.textContent = `${tipoIcon} ${tipoLabel} — ${a.nomeArquivo}`;
   els.viewerFileName.textContent = a.nomeArquivo;
-  els.viewerFileInfo.textContent = `${formatBytes(a.tamanho || 0)} · ${conteudo.length.toLocaleString('pt-BR')} caracteres · ${a.status === 'ok' ? 'processado' : (a.status === 'erro' ? 'erro' : 'pendente')}${a.licitareq ? ' · LicitaReq' : ''}`;
+  els.viewerFileInfo.textContent = `${formatBytes(a.tamanho || 0)} · ${conteudo.length.toLocaleString('pt-BR')} caracteres · ${a.status === 'ok' ? 'processado' : (a.status === 'erro' ? 'erro' : 'pendente')} · ${tipoLabel}`;
   els.viewerText.textContent = conteudo;
   els.viewerText.scrollTop = 0;
 
@@ -1548,7 +1703,7 @@ async function copiarTextoVisualizador() {
 }
 
 /* ==========================================================================
- * 17. PDF (mantido integralmente da v7.2 — resumido aqui por brevidade)
+ * 17. PDF EXECUTIVO
  * ======================================================================== */
 const PDF_PALETTE = {
   primaria: '#1e3a8a', secundaria: '#2563eb', texto: '#1e293b',
@@ -1800,7 +1955,7 @@ function exportarRelatorioProcessoConsolidadoPDF(processo) {
   const paramModalidade = (processo.metadados?.modalidade !== 'auto') ? processo.metadados.modalidade : els.paramModalidade.value;
   const paramCriterio   = (processo.metadados?.criterio   !== 'auto') ? processo.metadados.criterio   : els.paramCriterio.value;
   const res = analisarTextoIndividual(corpus, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: '' });
-  const arquivosLR = processo.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
+  const arquivosLR = processo.arquivos.filter(a => a.tipo === 'requerimento' && a.licitareq);
   const licInfo = arquivosLR.length ? arquivosLR[0].licitareq : null;
   const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: processo.nome, notas: processo.notas || '', licitareqInfo: licInfo });
   const safe = String(processo.nome || 'processo').replace(/[/\\?%*:|"<>]/g, '_');
@@ -1819,7 +1974,7 @@ function exportarPDFTodos() {
     const paramModalidade = (p.metadados?.modalidade !== 'auto') ? p.metadados.modalidade : els.paramModalidade.value;
     const paramCriterio   = (p.metadados?.criterio   !== 'auto') ? p.metadados.criterio   : els.paramCriterio.value;
     const res = analisarTextoIndividual(corpus, { paramObjeto, paramModalidade, paramCriterio, nomeArquivo: '' });
-    const arquivosLR = p.arquivos.filter(a => a.licitareq && a.licitareq.licitareq);
+    const arquivosLR = p.arquivos.filter(a => a.tipo === 'requerimento' && a.licitareq);
     const licInfo = arquivosLR.length ? arquivosLR[0].licitareq : null;
     const dd = gerarDefinicaoPDF(res, { tipo: 'processo', nome: p.nome, notas: p.notas || '', licitareqInfo: licInfo });
     if (idx > 0) contents.push({ text: '', pageBreak: 'before' });
@@ -1848,7 +2003,7 @@ function exportarPDFTodos() {
 function exportarJSON(processos = null) {
   const lista = processos || state.processos;
   const payload = {
-    ferramenta: 'LicitaAudit', versao: '7.3.0', exportadoEm: new Date().toISOString(),
+    ferramenta: 'LicitaAudit', versao: '7.4.0', exportadoEm: new Date().toISOString(),
     processos: lista.map(p => ({
       id: p.id, nome: p.nome, cor: p.cor, tags: p.tags, criadoEm: p.criadoEm,
       notas: p.notas || '',
@@ -1858,6 +2013,7 @@ function exportarJSON(processos = null) {
         score: a.score, risco: a.risco, identificacao: a.identificacao,
         estatisticas: a.estatisticas, resultados: a.resultados, correcoes: a.correcoes,
         licitareq: a.licitareq || null,
+        tipo: a.tipo || null,
         texto: a.texto ? a.texto.slice(0, 200000) : '',
       })),
     })),
@@ -1889,19 +2045,23 @@ function normalizarProcessoImportado(proc) {
     notas: proc?.notas || '',
     metadados: proc?.metadados || { modalidade: 'auto', natureza: 'auto', criterio: 'auto' },
     _importadoEm: new Date().toISOString(),
-    arquivos: arquivos.filter(a => a && typeof a === 'object').map(a => ({
-      ...a,
-      id: a.id || uid('arq'),
-      nomeArquivo: a.nomeArquivo || 'arquivo_importado',
-      ext: a.ext || 'txt',
-      tamanho: a.tamanho || (a.texto ? a.texto.length : 0),
-      status: 'ok',
-      resultados: Array.isArray(a.resultados) ? a.resultados : [],
-      correcoes: Array.isArray(a.correcoes) ? a.correcoes : [],
-      estatisticas: a.estatisticas || { total: MATRIZ_CORE_30.length, aplicaveis: 0, ignoradas: 0, ok: 0, falha: 0, criticas: 0, medias: 0, baixas: 0, porBloco: {} },
-      identificacao: a.identificacao || {},
-      licitareq: a.licitareq || false,
-    })),
+    arquivos: arquivos.filter(a => a && typeof a === 'object').map(a => {
+      const tipo = a.tipo || classificarArquivo(a.nomeArquivo || '', a.texto || '');
+      return {
+        ...a,
+        id: a.id || uid('arq'),
+        nomeArquivo: a.nomeArquivo || 'arquivo_importado',
+        ext: a.ext || 'txt',
+        tamanho: a.tamanho || (a.texto ? a.texto.length : 0),
+        status: 'ok',
+        tipo,
+        licitareq: tipo === 'requerimento' ? (a.licitareq || null) : null,
+        resultados: Array.isArray(a.resultados) ? a.resultados : [],
+        correcoes: Array.isArray(a.correcoes) ? a.correcoes : [],
+        estatisticas: a.estatisticas || { total: MATRIZ_CORE_30.length, aplicaveis: 0, ignoradas: 0, ok: 0, falha: 0, criticas: 0, medias: 0, baixas: 0, porBloco: {} },
+        identificacao: a.identificacao || {},
+      };
+    }),
   };
 }
 function extrairProcessosDoJSON(dados) {
@@ -1972,7 +2132,8 @@ function toggleTheme() {
  * 20. EXEMPLO
  * ======================================================================== */
 function carregarExemplo() {
-  const exemplo = `PROCESSO ADMINISTRATIVO: 00000.004512/2026-88
+  const exemploEdital = `UNITAU_Edital_Pregao_00045_2026.txt
+PROCESSO ADMINISTRATIVO: 00000.004512/2026-88
 MODALIDADE: Pregão Eletrônico
 OBJETO: Aquisição de Workstations e Notebooks para modernização do parque tecnológico.
 
@@ -2011,47 +2172,53 @@ Prazo mínimo de 8 (oito) dias úteis. Publicação no PNCP. Impugnação em fas
 Fiscal titular e fiscal substituto designados. Gestor do contrato designado.
 Recebimento provisório e definitivo. Pagamento em até 30 dias após aceite. Sanções administrativas previstas.`;
 
-  const exemploLR = `LicitaReq — Documento de Formalização de Demanda
+  const exemploReq = `LicitaReq_Requerimento_DFD_042_2026.txt
+Documento de Formalização de Demanda (DFD)
 Memorando nº 042/2026
 Unidade Requisitante: Diretoria de Tecnologia da Informação
 
-OBJETO: Aquisição de Lâmpadas LED para modernização da iluminação predial.
+OBJETO: Aquisição de Workstations e Notebooks para modernização do parque tecnológico.
 
-Valor estimado: R$ 32.500,00 (trinta e dois mil e quinhentos reais)
+Valor estimado: R$ 165.000,00
 
 Justificativa: Necessidade de modernização do parque tecnológico visando eficiência
-energética e economicidade.
+energética, economicidade e continuidade dos serviços.
 
 Dotação orçamentária prevista no programa de trabalho 12.345.6789.0001.
 
 Documento gerado eletronicamente pelo sistema LicitaReq — Motor de regras Lei 14.133/2021`;
 
-  const p1 = criarProcesso('Processo A — Aquisição de TI');
+  const p1 = criarProcesso('Processo A — TI (Edital + Requerimento)');
   p1.cor = CORES_PRESET[0]; p1.tags = ['TI', 'Urgente', '2026'];
-  const p2 = criarProcesso('Processo B — Lâmpadas LED (LicitaReq)');
-  p2.cor = CORES_PRESET[1]; p2.tags = ['LicitaReq', 'Consumo'];
-  const p3 = criarProcesso('Processo C — Obra Pública');
-  p3.cor = CORES_PRESET[2]; p3.tags = ['Obra', 'Engenharia'];
+  const p2 = criarProcesso('Processo B — Obra Pública');
+  p2.cor = CORES_PRESET[2]; p2.tags = ['Obra', 'Engenharia'];
 
   (async () => {
-    const res1 = analisarTextoIndividual(exemplo, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto', nomeArquivo: 'Edital.txt' });
+    /* Minuta (Edital UNITAU_) */
+    const res1 = analisarTextoIndividual(exemploEdital, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto', nomeArquivo: 'UNITAU_Edital_Pregao_00045_2026.txt' });
     p1.arquivos.push({
-      id: uid('arq'), nomeArquivo: 'Edital_Pregao_00000.004512-2026.txt',
-      ext: 'txt', tamanho: new Blob([exemplo]).size,
-      texto: exemplo, status: 'ok', ...res1,
+      id: uid('arq'), nomeArquivo: 'UNITAU_Edital_Pregao_00045_2026.txt',
+      ext: 'txt', tamanho: new Blob([exemploEdital]).size,
+      texto: exemploEdital, status: 'ok',
+      tipo: res1.tipoArquivo || 'minuta',
+      licitareq: false,
+      ...res1,
     });
 
-    const res2 = analisarTextoIndividual(exemploLR, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto', nomeArquivo: 'Requerimento_LicitaReq_042.txt' });
-    p2.arquivos.push({
-      id: uid('arq'), nomeArquivo: 'Requerimento_LicitaReq_042.txt',
-      ext: 'txt', tamanho: new Blob([exemploLR]).size,
-      texto: exemploLR, status: 'ok', ...res2,
-      licitareq: !!res2.licitareq,
+    /* Requerimento (LicitaReq_) */
+    const res2 = analisarTextoIndividual(exemploReq, { paramObjeto: 'auto', paramModalidade: 'auto', paramCriterio: 'auto', nomeArquivo: 'LicitaReq_Requerimento_DFD_042_2026.txt' });
+    p1.arquivos.push({
+      id: uid('arq'), nomeArquivo: 'LicitaReq_Requerimento_DFD_042_2026.txt',
+      ext: 'txt', tamanho: new Blob([exemploReq]).size,
+      texto: exemploReq, status: 'ok',
+      tipo: res2.tipoArquivo || 'requerimento',
+      licitareq: res2.licitareq || null,
+      ...res2,
     });
 
     state.ativo = p1.id;
     renderTudo();
-    toast('Exemplo carregado com arquivo LicitaReq.', 'ok');
+    toast('Exemplo carregado: edital (minuta) + requerimento (LicitaReq) em seções separadas.', 'ok');
   })();
 }
 
@@ -2103,15 +2270,12 @@ function bindEventosGlobais() {
     e.target.value = '';
   });
 
-  /* Fechar modais */
   $$('[data-close-modal]').forEach(el => el.addEventListener('click', fecharModal));
   $$('[data-close-modal-crit]').forEach(el => el.addEventListener('click', fecharModalCriterios));
   $$('[data-close-modal-viz]').forEach(el => el.addEventListener('click', fecharModalVisualizador));
 
-  /* Botão copiar do visualizador */
   els.btnCopiarTextoArq?.addEventListener('click', copiarTextoVisualizador);
 
-  /* Esc fecha modal mais alto */
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (!els.modalVisualizador.classList.contains('is-hidden')) { fecharModalVisualizador(); return; }
@@ -2149,7 +2313,7 @@ function bootstrap() {
   console.info(
     '%cLicitaAudit',
     'background:#1e3a8a;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700',
-    '· v7.3 · Requerimentos/DFD separados + Visualizador de texto'
+    '· v7.4 · Classificação automática (requerimento / minuta / anexo)'
   );
 }
 document.addEventListener('DOMContentLoaded', bootstrap);
