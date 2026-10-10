@@ -3,194 +3,187 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="LicitaAudit — Módulo de auditoria, integridade e conformidade legal do ecossistema OmniLicit (Lei nº 14.133/2021)." />
+  <meta name="description" content="LicitaAudit — Workspace de Auditoria Integrada do ecossistema OmniLicit (Lei nº 14.133/2021)." />
   <meta name="theme-color" content="#09090B" />
-  <title>LicitaAudit | OmniLicit</title>
+  <title>LicitaAudit · Workspace | OmniLicit</title>
 
   <link rel="icon" href="logo-omnlicit.png" type="image/png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet"
-  />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+
+  <!-- pdfMake (CDN) — geração do laudo executivo em PDF -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
 </head>
 <body>
-  <div class="app-shell">
 
-    <!-- ============ HEADER ============ -->
-    <header class="app-header">
-      <div class="brand">
-        <img src="logo-omnlicit.png" alt="OmniLicit" class="brand-logo" />
-        <div class="brand-text">
-          <h1>LicitaAudit<span class="brand-dot">.</span></h1>
-          <p>Auditoria · Integridade · Conformidade — Lei nº 14.133/2021</p>
-        </div>
+  <!-- ================= HEADER ================= -->
+  <header class="app-header">
+    <div class="brand">
+      <img src="logo-omnlicit.png" alt="OmniLicit" class="brand-logo" />
+      <div class="brand-text">
+        <h1>LicitaAudit<span class="dot">.</span> <small>Workspace</small></h1>
+        <p>Auditoria Integrada · Lei nº 14.133/2021 · OmniLicit</p>
       </div>
+    </div>
 
-      <div class="header-actions">
-        <span class="badge badge-live" id="statusBadge">
-          <span class="pulse"></span> Pronto
-        </span>
-        <button
-          id="themeToggle"
-          class="icon-btn"
-          type="button"
-          aria-label="Alternar tema claro/escuro"
-          title="Alternar tema"
-        >
-          <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-          </svg>
-          <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="4"/>
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-          </svg>
+    <div class="header-center">
+      <div class="process-chip" id="processChip" title="Processo em auditoria">
+        <span class="process-chip-label">Processo</span>
+        <span class="process-chip-value" id="processChipValue">— não identificado —</span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <span class="badge badge-live" id="statusBadge">
+        <span class="pulse"></span> <span id="statusBadgeText">Workspace vazio</span>
+      </span>
+      <button id="btnExportJSON" class="icon-btn" type="button" title="Exportar trilha JSON" aria-label="Exportar trilha JSON">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+      <button id="btnExportPDF" class="primary-btn" type="button" title="Exportar laudo em PDF">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        Exportar Laudo
+      </button>
+      <button id="themeToggle" class="icon-btn" type="button" aria-label="Alternar tema" title="Alternar tema">
+        <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ================= BODY (sidebar + main) ================= -->
+  <div class="app-body">
+
+    <!-- --------- SIDEBAR --------- -->
+    <aside class="sidebar" aria-label="Documentos do processo">
+      <div class="sidebar-head">
+        <div>
+          <h2>Documentos do Processo</h2>
+          <span class="sidebar-sub" id="sidebarSub">0 de 5 módulos importados</span>
+        </div>
+        <button id="btnBulk" class="ghost-btn" type="button" title="Importar múltiplos arquivos com roteamento automático">
+          + Pacote
         </button>
       </div>
-    </header>
 
-    <!-- ============ KPI STRIP ============ -->
-    <section class="kpi-strip" aria-label="Indicadores de auditoria">
-      <div class="kpi">
-        <span class="kpi-label">Artefatos</span>
-        <span class="kpi-value" id="kpiFiles">0</span>
-      </div>
-      <div class="kpi">
-        <span class="kpi-label">Selos digitais</span>
-        <span class="kpi-value" id="kpiSeals">0</span>
-      </div>
-      <div class="kpi">
-        <span class="kpi-label">Conformidade</span>
-        <span class="kpi-value accent" id="kpiCompliance">—</span>
-      </div>
-      <div class="kpi">
-        <span class="kpi-label">Riscos críticos</span>
-        <span class="kpi-value danger" id="kpiRisks">0</span>
-      </div>
-    </section>
+      <ul class="slot-list" id="slotList"><!-- render dinâmico --></ul>
 
-    <!-- ============ GRID PRINCIPAL ============ -->
-    <main class="grid">
-
-      <!-- Coluna esquerda: Dropzone + Lista -->
-      <section class="panel panel-span-7">
-        <header class="panel-head">
-          <h2>Ingestão de Artefatos</h2>
-          <span class="panel-hint">PDF · XML · P7S · DOCX · qualquer formato</span>
-        </header>
-
-        <label
-          id="dropzone"
-          class="dropzone"
-          for="fileInput"
-          tabindex="0"
-          role="button"
-          aria-label="Enviar arquivos para auditoria"
-        >
-          <input
-            id="fileInput"
-            type="file"
-            multiple
-            hidden
-            accept="*/*"
-          />
-          <div class="dz-icon">
-            <svg viewBox="0 0 24 24" width="34" height="34" fill="none"
-                 stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
+      <div class="sidebar-foot">
+        <div class="workspace-hash" id="workspaceHashWrap" hidden>
+          <label>Hash do Workspace (SHA-256 raiz)</label>
+          <div class="workspace-hash-row">
+            <code id="workspaceHash">—</code>
+            <button id="btnCopyWsHash" class="icon-mini" type="button" title="Copiar hash do workspace">⧉</button>
           </div>
-          <p class="dz-title">Arraste artefatos de qualquer módulo OmniLicit</p>
-          <p class="dz-sub">ou <span>clique para selecionar</span> · múltiplos arquivos suportados</p>
-          <div class="dz-tags">
-            <span>Editais</span><span>TR/ETP</span><span>Contratos</span><span>Propostas</span><span>Atas PNCP</span>
-          </div>
-        </label>
-
-        <div class="progress-wrap" id="progressWrap" hidden>
-          <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
-          <span class="progress-text" id="progressText">0%</span>
+          <span class="hash-hint">Combinado a partir dos hashes individuais dos artefatos carregados.</span>
         </div>
+        <button id="btnReset" class="ghost-btn danger" type="button">Reiniciar Workspace</button>
+      </div>
+    </aside>
 
-        <div class="list-wrap">
-          <div class="list-head">
-            <h3>Artefatos auditados</h3>
-            <button id="btnClear" class="ghost-btn" type="button">Limpar</button>
+    <!-- --------- MAIN --------- -->
+    <main class="main-content">
+
+      <!-- KPIs -->
+      <section class="kpi-strip" aria-label="Indicadores do workspace">
+        <div class="kpi"><span class="kpi-label">Módulos importados</span><span class="kpi-value" id="kpiModules">0/5</span></div>
+        <div class="kpi"><span class="kpi-label">Hasheria íntegra</span><span class="kpi-value" id="kpiHashes">0</span></div>
+        <div class="kpi"><span class="kpi-label">Selos digitais</span><span class="kpi-value accent" id="kpiSeals">0</span></div>
+        <div class="kpi"><span class="kpi-label">Conformidade global</span><span class="kpi-value accent" id="kpiCompliance">—</span></div>
+        <div class="kpi"><span class="kpi-label">Alertas críticos</span><span class="kpi-value danger" id="kpiCritical">0</span></div>
+      </section>
+
+      <!-- Integridade -->
+      <section class="panel">
+        <header class="panel-head">
+          <div>
+            <h2>Integridade Documental</h2>
+            <span class="panel-hint">Verificação cruzada de hashes SHA-256 dos módulos importados</span>
           </div>
-          <ul id="fileList" class="file-list">
-            <li class="empty">Nenhum artefato ingerido ainda.</li>
-          </ul>
+          <div class="panel-actions">
+            <button id="btnReverify" class="ghost-btn" type="button">Reverificar</button>
+          </div>
+        </header>
+        <div class="integrity-grid" id="integrityGrid">
+          <div class="empty">Nenhum artefato carregado no workspace.</div>
         </div>
       </section>
 
-      <!-- Coluna direita: Selos -->
-      <section class="panel panel-span-5">
+      <!-- Divergências -->
+      <section class="panel">
         <header class="panel-head">
-          <h2>Selos Digitais</h2>
-          <span class="panel-hint">PAdES · PKCS#7 · XMLDSig · ICP-Brasil</span>
+          <div>
+            <h2>Divergências e Alertas Cruzados</h2>
+            <span class="panel-hint">Consistência entre DFD · ETP · TR · Edital · Contrato</span>
+          </div>
+          <div class="panel-actions">
+            <span class="chip chip-danger" id="chipCritical">0 críticos</span>
+            <span class="chip chip-warn" id="chipWarning">0 avisos</span>
+            <span class="chip chip-info" id="chipInfo">0 informativos</span>
+          </div>
         </header>
-        <ul id="sealList" class="seal-list">
-          <li class="empty">Aguardando artefatos assinados.</li>
-        </ul>
+        <div class="div-table-wrap">
+          <table class="div-table" id="divTable">
+            <thead>
+              <tr>
+                <th style="width:90px">Severidade</th>
+                <th style="width:150px">Categoria</th>
+                <th>Descrição</th>
+                <th style="width:220px">Módulos envolvidos</th>
+                <th style="width:120px">Base legal</th>
+              </tr>
+            </thead>
+            <tbody id="divTableBody">
+              <tr><td colspan="5" class="empty-cell">Nenhuma divergência detectada.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- Matriz de conformidade -->
-      <section class="panel panel-span-12">
+      <section class="panel">
         <header class="panel-head">
-          <h2>Matriz de Conformidade — Lei nº 14.133/2021</h2>
+          <div>
+            <h2>Matriz de Conformidade — Lei nº 14.133/2021</h2>
+            <span class="panel-hint">Status derivado automaticamente · clique para ajustar manualmente</span>
+          </div>
           <div class="panel-actions">
             <span class="chip chip-ok" id="chipOk">0 conformes</span>
             <span class="chip chip-warn" id="chipWarn">0 pendentes</span>
             <span class="chip chip-danger" id="chipFail">0 não conformes</span>
           </div>
         </header>
-
         <div id="complianceList" class="compliance-list"></div>
       </section>
 
-      <!-- Ações de Laudo -->
-      <section class="panel panel-span-12 panel-actions-final">
-        <div class="final-text">
-          <h2>Emissão do Laudo de Auditoria</h2>
-          <p>
-            Gera documento rastreável com hash SHA-256 de cada artefato, identificação
-            de selos digitais, matriz de conformidade legal e carimbo temporal do ato.
-          </p>
-        </div>
-        <div class="final-buttons">
-          <button id="btnExportHTML" class="primary-btn" type="button">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
-            Exportar Laudo (HTML/PDF)
-          </button>
-          <button id="btnExportJSON" class="secondary-btn" type="button">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
-                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Exportar JSON (trilha)
-          </button>
-        </div>
-      </section>
     </main>
-
-    <footer class="app-footer">
-      <span>© <span id="year"></span> OmniLicit · LicitaAudit</span>
-      <span class="sep">·</span>
-      <span>Processamento 100% local — nenhum artefato sai do dispositivo</span>
-    </footer>
   </div>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="app-footer">
+    <span>© <span id="year"></span> OmniLicit · LicitaAudit Workspace</span>
+    <span class="sep">·</span>
+    <span>Processamento 100% local · nenhum documento é transmitido</span>
+    <span class="sep">·</span>
+    <span id="footerSession">Sessão iniciada —</span>
+  </footer>
+
+  <!-- Inputs ocultos -->
+  <input type="file" id="bulkInput" multiple hidden />
 
   <!-- Toasts -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
