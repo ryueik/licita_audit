@@ -1,194 +1,200 @@
 <!DOCTYPE html>
-<html lang="pt-BR" data-theme="light">
+<html lang="pt-BR" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="color-scheme" content="light dark" />
-  <title>LicitaAudit · Auditoria de Licitações — Lei 14.133/2021</title>
-  <meta name="description" content="Auditoria híbrida de processos licitatórios — matriz dinâmica, integração LicitaReq, notas do auditor e PDFs executivos." />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="LicitaAudit — Módulo de auditoria, integridade e conformidade legal do ecossistema OmniLicit (Lei nº 14.133/2021)." />
+  <meta name="theme-color" content="#09090B" />
+  <title>LicitaAudit | OmniLicit</title>
 
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231e3a8a'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-weight='800' font-size='14'>LA</text></svg>" />
-
+  <link rel="icon" href="logo-omnlicit.png" type="image/png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" referrerpolicy="no-referrer"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" referrerpolicy="no-referrer"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js"></script>
-
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="style.css" />
-  <script type="module" src="app.js"></script>
 </head>
-
 <body>
-  <div class="app app-container">
-    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+  <div class="app-shell">
 
-    <aside class="sidebar" id="sidebar" aria-label="Painel de controle">
-      <header class="brand">
-        <div class="brand__mark" aria-hidden="true">LA</div>
-        <div class="brand__text">
-          <h1>LicitaAudit</h1>
-          <p>Auditoria de Licitações</p>
-        </div>
-      </header>
-
-      <section class="panel">
-        <button id="btnNovoProcesso" class="btn btn--primary btn--block" type="button">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14m-7-7h14" stroke-linecap="round" /></svg>
-          Novo Processo
-        </button>
-        <button id="btnCarregarExemplo" class="btn btn--ghost btn--block" type="button">Carregar Exemplo</button>
-      </section>
-
-      <section class="panel">
-        <h2 class="panel__title">Perfil Padrão</h2>
-        <label class="field">
-          <span class="field__label">Modalidade (Art. 28)</span>
-          <select id="paramModalidade" class="select">
-            <option value="auto">Detectar automaticamente</option>
-            <option value="pregao">Pregão (Art. 29)</option>
-            <option value="concorrencia">Concorrência (Art. 29)</option>
-            <option value="concurso">Concurso (Art. 30)</option>
-            <option value="leilao">Leilão (Art. 31)</option>
-            <option value="dialogo">Diálogo Competitivo (Art. 32)</option>
-            <option value="dispensa">Dispensa (Art. 75)</option>
-            <option value="inexigibilidade">Inexigibilidade (Art. 74)</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field__label">Natureza do Objeto (Art. 6º)</span>
-          <select id="paramObjeto" class="select">
-            <option value="auto">Detectar automaticamente</option>
-            <option value="bens">Bens comuns</option>
-            <option value="servicos-comuns">Serviços comuns</option>
-            <option value="servicos-especiais">Serviços especiais</option>
-            <option value="obras">Obras e serviços de engenharia</option>
-            <option value="intelectual">Serviços técnicos intelectuais</option>
-            <option value="alienacao">Alienação / Concessão</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="field__label">Critério de Julgamento (Art. 33)</span>
-          <select id="paramCriterio" class="select">
-            <option value="auto">Detectar automaticamente</option>
-            <option value="menor-preco">Menor preço</option>
-            <option value="maior-desconto">Maior desconto</option>
-            <option value="melhor-tecnica">Melhor técnica ou conteúdo artístico</option>
-            <option value="tecnica-preco">Técnica e preço</option>
-            <option value="maior-lance">Maior lance</option>
-            <option value="maior-retorno">Maior retorno econômico</option>
-          </select>
-        </label>
-        <p style="font-size:10.5px; color:var(--text-dim); margin-top:8px; line-height:1.5;">
-          Aplica-se a <strong>todos</strong> os processos abertos. Cada processo pode sobrescrever individualmente.
-        </p>
-      </section>
-
-      <section class="panel">
-        <h2 class="panel__title">Exportação</h2>
-        <button id="pdfAllBtn" class="btn btn--soft btn--block" type="button">📦 Exportar PDFs (Todos)</button>
-        <button id="jsonBtn" class="btn btn--soft btn--block" type="button">💾 Salvar JSON</button>
-        <button id="jsonLoadBtn" class="btn btn--soft btn--block" type="button">📥 Carregar JSON (múltiplos)</button>
-        <input id="jsonLoadInput" type="file" accept=".json,application/json" multiple hidden />
-      </section>
-
-      <p class="disclaimer">
-        <strong>Aviso orientativo.</strong> Os percentuais têm caráter indicativo e servem para localizar requisitos indispensáveis. A conferência humana dos autos permanece obrigatória.
-      </p>
-    </aside>
-
-    <main class="main main-content">
-      <header class="topbar">
-        <div class="topbar__left">
-          <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" /></svg>
-          </button>
-          <div class="topbar__title">
-            <h2>Painel de Auditoria</h2>
-            <p id="topbarSubtitle">Nenhum processo criado</p>
-          </div>
-        </div>
-        <button id="themeToggle" class="icon-btn" type="button" aria-label="Alternar tema" title="Alternar tema">
-          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round" /></svg>
-        </button>
-      </header>
-
-      <nav id="tabsProcessos" class="tabs" role="tablist" aria-label="Navegação de processos"></nav>
-
-      <section id="emptyState" class="empty-state">
-        <div class="empty-state__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke-linejoin="round" /></svg>
-        </div>
-        <h3>Comece criando um Processo</h3>
-        <p>Organize múltiplos documentos, anexe arquivos do <strong>LicitaReq</strong>, atribua metadados, registre notas e audite qualquer combinação prevista na Lei nº 14.133/2021.</p>
-        <button class="btn btn--primary" id="btnNovoProcessoEmpty" type="button">+ Criar Primeiro Processo</button>
-      </section>
-
-      <section id="workspace" class="workspace is-hidden" aria-live="polite"></section>
-    </main>
-  </div>
-
-  <!-- Modal genérico -->
-  <div id="modal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
-    <div class="modal__overlay" data-close-modal></div>
-    <div class="modal__box">
-      <header class="modal__head">
-        <h3 id="modalTitulo">Detalhes</h3>
-        <button class="modal__close" type="button" data-close-modal aria-label="Fechar">&times;</button>
-      </header>
-      <div id="modalBody" class="modal__body"></div>
-    </div>
-  </div>
-
-  <!-- Modal de Critérios Ativos -->
-  <div id="modalCriterios" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalCriteriosTitulo">
-    <div class="modal__overlay" data-close-modal-crit></div>
-    <div class="modal__box modal__box--wide">
-      <header class="modal__head">
-        <h3 id="modalCriteriosTitulo">Critérios Ativos</h3>
-        <button class="modal__close" type="button" data-close-modal-crit aria-label="Fechar">&times;</button>
-      </header>
-      <div id="modalCriteriosBody" class="modal__body"></div>
-    </div>
-  </div>
-
-  <!-- Modal Visualizador de Texto -->
-  <div id="modalVisualizador" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="modalVizTitulo">
-    <div class="modal__overlay" data-close-modal-viz></div>
-    <div class="modal__box modal__box--wide">
-      <header class="modal__head">
-        <h3 id="modalVizTitulo">Visualização de Texto</h3>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <button class="btn btn--soft btn--sm" id="btnCopiarTextoArq" type="button" title="Copiar todo o texto">📋 Copiar</button>
-          <button class="modal__close" type="button" data-close-modal-viz aria-label="Fechar">&times;</button>
-        </div>
-      </header>
-      <div class="modal__body">
-        <div class="viewer-meta">
-          <span class="viewer-meta__name" id="viewerFileName">—</span>
-          <span class="viewer-meta__info" id="viewerFileInfo">—</span>
-        </div>
-        <pre id="viewerText" class="viewer-text" tabindex="0" aria-label="Conteúdo textual do arquivo"></pre>
-        <div class="viewer-footer">
-          <span class="viewer-footer__hint">
-            <strong>Esc</strong> fecha · <strong>Ctrl/Cmd + A</strong> seleciona tudo
-          </span>
+    <!-- ============ HEADER ============ -->
+    <header class="app-header">
+      <div class="brand">
+        <img src="logo-omnlicit.png" alt="OmniLicit" class="brand-logo" />
+        <div class="brand-text">
+          <h1>LicitaAudit<span class="brand-dot">.</span></h1>
+          <p>Auditoria · Integridade · Conformidade — Lei nº 14.133/2021</p>
         </div>
       </div>
-    </div>
+
+      <div class="header-actions">
+        <span class="badge badge-live" id="statusBadge">
+          <span class="pulse"></span> Pronto
+        </span>
+        <button
+          id="themeToggle"
+          class="icon-btn"
+          type="button"
+          aria-label="Alternar tema claro/escuro"
+          title="Alternar tema"
+        >
+          <svg class="ico-moon" viewBox="0 0 24 24" width="18" height="18" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg class="ico-sun" viewBox="0 0 24 24" width="18" height="18" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ============ KPI STRIP ============ -->
+    <section class="kpi-strip" aria-label="Indicadores de auditoria">
+      <div class="kpi">
+        <span class="kpi-label">Artefatos</span>
+        <span class="kpi-value" id="kpiFiles">0</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi-label">Selos digitais</span>
+        <span class="kpi-value" id="kpiSeals">0</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi-label">Conformidade</span>
+        <span class="kpi-value accent" id="kpiCompliance">—</span>
+      </div>
+      <div class="kpi">
+        <span class="kpi-label">Riscos críticos</span>
+        <span class="kpi-value danger" id="kpiRisks">0</span>
+      </div>
+    </section>
+
+    <!-- ============ GRID PRINCIPAL ============ -->
+    <main class="grid">
+
+      <!-- Coluna esquerda: Dropzone + Lista -->
+      <section class="panel panel-span-7">
+        <header class="panel-head">
+          <h2>Ingestão de Artefatos</h2>
+          <span class="panel-hint">PDF · XML · P7S · DOCX · qualquer formato</span>
+        </header>
+
+        <label
+          id="dropzone"
+          class="dropzone"
+          for="fileInput"
+          tabindex="0"
+          role="button"
+          aria-label="Enviar arquivos para auditoria"
+        >
+          <input
+            id="fileInput"
+            type="file"
+            multiple
+            hidden
+            accept="*/*"
+          />
+          <div class="dz-icon">
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none"
+                 stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <p class="dz-title">Arraste artefatos de qualquer módulo OmniLicit</p>
+          <p class="dz-sub">ou <span>clique para selecionar</span> · múltiplos arquivos suportados</p>
+          <div class="dz-tags">
+            <span>Editais</span><span>TR/ETP</span><span>Contratos</span><span>Propostas</span><span>Atas PNCP</span>
+          </div>
+        </label>
+
+        <div class="progress-wrap" id="progressWrap" hidden>
+          <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+          <span class="progress-text" id="progressText">0%</span>
+        </div>
+
+        <div class="list-wrap">
+          <div class="list-head">
+            <h3>Artefatos auditados</h3>
+            <button id="btnClear" class="ghost-btn" type="button">Limpar</button>
+          </div>
+          <ul id="fileList" class="file-list">
+            <li class="empty">Nenhum artefato ingerido ainda.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Coluna direita: Selos -->
+      <section class="panel panel-span-5">
+        <header class="panel-head">
+          <h2>Selos Digitais</h2>
+          <span class="panel-hint">PAdES · PKCS#7 · XMLDSig · ICP-Brasil</span>
+        </header>
+        <ul id="sealList" class="seal-list">
+          <li class="empty">Aguardando artefatos assinados.</li>
+        </ul>
+      </section>
+
+      <!-- Matriz de conformidade -->
+      <section class="panel panel-span-12">
+        <header class="panel-head">
+          <h2>Matriz de Conformidade — Lei nº 14.133/2021</h2>
+          <div class="panel-actions">
+            <span class="chip chip-ok" id="chipOk">0 conformes</span>
+            <span class="chip chip-warn" id="chipWarn">0 pendentes</span>
+            <span class="chip chip-danger" id="chipFail">0 não conformes</span>
+          </div>
+        </header>
+
+        <div id="complianceList" class="compliance-list"></div>
+      </section>
+
+      <!-- Ações de Laudo -->
+      <section class="panel panel-span-12 panel-actions-final">
+        <div class="final-text">
+          <h2>Emissão do Laudo de Auditoria</h2>
+          <p>
+            Gera documento rastreável com hash SHA-256 de cada artefato, identificação
+            de selos digitais, matriz de conformidade legal e carimbo temporal do ato.
+          </p>
+        </div>
+        <div class="final-buttons">
+          <button id="btnExportHTML" class="primary-btn" type="button">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Exportar Laudo (HTML/PDF)
+          </button>
+          <button id="btnExportJSON" class="secondary-btn" type="button">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Exportar JSON (trilha)
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>© <span id="year"></span> OmniLicit · LicitaAudit</span>
+      <span class="sep">·</span>
+      <span>Processamento 100% local — nenhum artefato sai do dispositivo</span>
+    </footer>
   </div>
 
-  <div id="loader" class="loader is-hidden" role="status" aria-live="assertive">
-    <div class="loader__box">
-      <div class="spinner" aria-hidden="true"></div>
-      <p id="loaderText">Processando…</p>
-    </div>
-  </div>
+  <!-- Toasts -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-  <div id="toast" class="toast is-hidden" role="alert"></div>
+  <script src="script.js"></script>
 </body>
 </html>
