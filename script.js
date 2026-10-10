@@ -1,127 +1,61 @@
 /* =============================================================
-   LicitaAudit · OmniLicit
-   Módulo de auditoria e conformidade — Lei nº 14.133/2021
-   Autor: Engenharia OmniLicit
+   LicitaAudit · Workspace — OmniLicit
+   Motor de auditoria cruzada · Lei nº 14.133/2021
    ============================================================= */
-
 'use strict';
 
 /* -------------------------------------------------------------
-   1. ESTADO GLOBAL
+   1. DEFINIÇÃO DOS MÓDULOS DO WORKSPACE
    ------------------------------------------------------------- */
-const STATE = {
-  files: [],          // [{ id, name, size, type, ext, hash, seal, at }]
-  compliance: {},     // { [itemId]: 'ok' | 'warn' | 'fail' | null }
-  startedAt: new Date(),
-};
+const SLOTS = [
+  { id: 'dfd',      code: 'LicitaReq',    label: 'DFD — Formalização de Demanda',      articles: ['Art. 12', 'Art. 18'], required: true  },
+  { id: 'etp',      code: 'LicitaETP',    label: 'ETP — Estudo Técnico Preliminar',    articles: ['Art. 18', 'Art. 22'], required: true  },
+  { id: 'tr',       code: 'LicitaTR',     label: 'TR — Termo de Referência',           articles: ['Art. 22', 'Art. 23'], required: true  },
+  { id: 'edital',   code: 'LicitaEdital', label: 'Edital de Licitação',                articles: ['Art. 25', 'Art. 36'], required: false },
+  { id: 'contrato', code: 'LicitaContrato', label: 'Contrato / Ata de Registro',       articles: ['Art. 92', 'Art. 94'], required: false },
+];
 
 /* -------------------------------------------------------------
    2. MATRIZ LEGAL — Lei nº 14.133/2021
    ------------------------------------------------------------- */
 const LEGAL_MATRIX = [
-  {
-    id: 'art5',
-    art: 'Art. 5º',
-    title: 'Observância dos princípios administrativos',
-    desc: 'Legalidade, impessoalidade, moralidade, publicidade, eficiência, motivação, razoabilidade, competitividade, planejamento, transparência, eficácia, segregação de funções e vinculação ao edital.',
-  },
-  {
-    id: 'art11',
-    art: 'Art. 11',
-    title: 'Objetivos do processo licitatório',
-    desc: 'Seleção da proposta apta a gerar o resultado de contratação mais vantajoso, tratamento isonômico e observância da justa competição.',
-  },
-  {
-    id: 'art12',
-    art: 'Art. 12',
-    title: 'Fases da licitação formalizadas',
-    desc: 'Preparatória, divulgação do edital, apresentação de propostas e lances, julgamento, habilitação, recursal, homologação.',
-  },
-  {
-    id: 'art18',
-    art: 'Art. 18',
-    title: 'Estudo Técnico Preliminar (ETP)',
-    desc: 'Caracterização da necessidade, levantamento de mercado, estimativa de quantidades, estimativa do valor, riscos e sustentabilidade.',
-  },
-  {
-    id: 'art22',
-    art: 'Art. 22',
-    title: 'Projeto Básico / Executivo',
-    desc: 'Descrição do objeto, fundamentação, prazo, especificações técnicas, critérios de julgamento e forma de pagamento.',
-  },
-  {
-    id: 'art23',
-    art: 'Art. 23',
-    title: 'Pesquisa de preços e Termo de Referência',
-    desc: 'Pesquisa de preços via painel de preços, contratações similares, mídia especializada ou fornecedores — para o TR.',
-  },
-  {
-    id: 'art24',
-    art: 'Art. 24',
-    title: 'Matriz de Alocação de Riscos',
-    desc: 'Obrigatória para contratos de grande vulto e obras/engenharia, identificando riscos e responsabilidades entre as partes.',
-  },
-  {
-    id: 'art25',
-    art: 'Art. 25',
-    title: 'Edital — conteúdo e publicidade',
-    desc: 'Objeto, regras de participação, critérios de julgamento, valores, prazos e demais elementos do processo.',
-  },
-  {
-    id: 'art33',
-    art: 'Art. 33',
-    title: 'Adoção do Pregão (eletrônico/preferencial)',
-    desc: 'Pregão como modalidade preferencial, obrigatoriamente eletrônico, para bens e serviços comuns.',
-  },
-  {
-    id: 'art36',
-    art: 'Art. 36',
-    title: 'Publicidade no PNCP',
-    desc: 'Divulgação obrigatória no Portal Nacional de Contratações Públicas, além do sítio oficial do ente.',
-  },
-  {
-    id: 'art63',
-    art: 'Art. 63',
-    title: 'Habilitação jurídica, técnica, fiscal e econômica',
-    desc: 'Comprovação de habilitação prévia à celebração do contrato, com verificação documental e de regularidade.',
-  },
-  {
-    id: 'art71',
-    art: 'Art. 71',
-    title: 'Encerramento da fase competitiva',
-    desc: 'Registro dos lances, julgamento das propostas e declaração do vencedor com publicidade.',
-  },
-  {
-    id: 'art72',
-    art: 'Art. 72',
-    title: 'Homologação e adjudicação',
-    desc: 'Homologação pela autoridade competente, com verificação de regularidade do processo e da proposta.',
-  },
-  {
-    id: 'art89',
-    art: 'Art. 89',
-    title: 'Contratação direta — dispensa',
-    desc: 'Hipóteses de dispensa (art. 75), justificativa de preço e razão de escolha do contratado.',
-  },
-  {
-    id: 'art90',
-    art: 'Art. 90',
-    title: 'Inexigibilidade de licitação',
-    desc: 'Comprovação de inviabilidade de competição, justificativa de preço e razão de escolha do fornecedor.',
-  },
-  {
-    id: 'art174',
-    art: 'Art. 174',
-    title: 'Portal Nacional de Contratações Públicas',
-    desc: 'Integração e alimentação obrigatória de dados ao PNCP.',
-  },
+  { id: 'art5',   art: 'Art. 5º',   title: 'Princípios administrativos',           desc: 'Legalidade, impessoalidade, moralidade, publicidade, eficiência, motivação, razoabilidade, competitividade, planejamento, transparência, segregação de funções.' },
+  { id: 'art11',  art: 'Art. 11',   title: 'Objetivos do processo licitatório',    desc: 'Seleção da proposta mais vantajosa, tratamento isonômico e observância da justa competição.' },
+  { id: 'art12',  art: 'Art. 12',   title: 'Fases da licitação',                   desc: 'Preparatória, divulgação do edital, apresentação de propostas e lances, julgamento, habilitação, recursal e homologação.' },
+  { id: 'art18',  art: 'Art. 18',   title: 'Estudo Técnico Preliminar (ETP)',      desc: 'Caracterização da necessidade, levantamento de mercado, estimativa de quantidades e valor, riscos e sustentabilidade.' },
+  { id: 'art22',  art: 'Art. 22',   title: 'Projeto Básico / Termo de Referência', desc: 'Descrição do objeto, fundamentação, prazo, especificações técnicas, critérios de julgamento e forma de pagamento.' },
+  { id: 'art23',  art: 'Art. 23',   title: 'Pesquisa de preços',                   desc: 'Painel de preços, contratações similares, mídia especializada ou fornecedores — para composição do TR.' },
+  { id: 'art24',  art: 'Art. 24',   title: 'Matriz de Alocação de Riscos',         desc: 'Obrigatória para contratos de grande vulto e obras/engenharia, com identificação de riscos e responsabilidades.' },
+  { id: 'art25',  art: 'Art. 25',   title: 'Edital — conteúdo e publicidade',      desc: 'Objeto, regras de participação, critérios de julgamento, valores, prazos e demais elementos do processo.' },
+  { id: 'art33',  art: 'Art. 33',   title: 'Adoção do Pregão (preferencial)',      desc: 'Pregão obrigatoriamente eletrônico para bens e serviços comuns.' },
+  { id: 'art36',  art: 'Art. 36',   title: 'Publicidade no PNCP',                  desc: 'Divulgação obrigatória no Portal Nacional de Contratações Públicas e no sítio oficial do ente.' },
+  { id: 'art63',  art: 'Art. 63',   title: 'Habilitação',                          desc: 'Jurídica, técnica, fiscal e econômico-financeira, com verificação prévia à celebração do contrato.' },
+  { id: 'art71',  art: 'Art. 71',   title: 'Encerramento da fase competitiva',     desc: 'Registro dos lances, julgamento das propostas e declaração do vencedor com publicidade.' },
+  { id: 'art72',  art: 'Art. 72',   title: 'Homologação e adjudicação',            desc: 'Homologação pela autoridade competente, com verificação de regularidade do processo e da proposta.' },
+  { id: 'art75',  art: 'Art. 75',   title: 'Contratação direta — dispensa',        desc: 'Hipóteses de dispensa, justificativa de preço e razão de escolha do contratado.' },
+  { id: 'art89',  art: 'Art. 89',   title: 'Contratação direta — procedimento',    desc: 'Justificativa de preço, razão de escolha e instrução processual nos casos de dispensa/inexigibilidade.' },
+  { id: 'art92',  art: 'Art. 92',   title: 'Cláusulas necessárias do contrato',    desc: 'Objeto, regime, preço, prazos, garantias, fiscalização, sanções, extinção e demais cláusulas essenciais.' },
+  { id: 'art94',  art: 'Art. 94',   title: 'Publicidade do contrato no PNCP',      desc: 'Publicação obrigatória do extrato contratual no Portal Nacional de Contratações Públicas.' },
+  { id: 'art174', art: 'Art. 174',  title: 'Portal Nacional de Contratações',      desc: 'Integração e alimentação obrigatória de dados ao PNCP.' },
 ];
 
 /* -------------------------------------------------------------
-   3. UTILITÁRIOS
+   3. ESTADO GLOBAL DO WORKSPACE
    ------------------------------------------------------------- */
-const $  = (sel, ctx = document) => ctx.querySelector(sel);
-const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+const STATE = {
+  slots: {},          // id -> { file, hash, text, fields, seal, loadedAt, status }
+  divergences: [],
+  compliance: {},     // articleId -> 'ok' | 'warn' | 'fail' | null (override manual)
+  autoCompliance: {}, // articleId -> status automático
+  startedAt: new Date(),
+};
+
+/* -------------------------------------------------------------
+   4. UTILITÁRIOS
+   ------------------------------------------------------------- */
+const $  = (s, c = document) => c.querySelector(s);
+const $$ = (s, c = document) => Array.from(c.querySelectorAll(s));
+const uid = () => Math.random().toString(36).slice(2, 10);
 
 const fmtBytes = (b) => {
   if (b < 1024) return `${b} B`;
@@ -129,9 +63,7 @@ const fmtBytes = (b) => {
   if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(2)} MB`;
   return `${(b / 1024 ** 3).toFixed(2)} GB`;
 };
-
-const fmtDate = (d = new Date()) =>
-  d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' });
+const fmtDate = (d = new Date()) => d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' });
 
 const toast = (msg, kind = 'ok', timeout = 3200) => {
   const el = document.createElement('div');
@@ -146,235 +78,630 @@ const toast = (msg, kind = 'ok', timeout = 3200) => {
   }, timeout);
 };
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+const escapeHTML = (s = '') => String(s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const escapeAttr = (s = '') => escapeHTML(s).replace(/`/g, '&#96;');
 
 /* -------------------------------------------------------------
-   4. TEMA (dark/light persistente)
+   5. TEMA (persistente)
    ------------------------------------------------------------- */
-const ThemeManager = {
-  KEY: 'omnlicit:theme',
+const Theme = {
+  KEY: 'omnlicit:licitaudit:theme',
   init() {
     const saved = localStorage.getItem(this.KEY);
     const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
-    const theme = saved || (prefersLight ? 'light' : 'dark');
-    this.apply(theme);
+    this.apply(saved || (prefersLight ? 'light' : 'dark'));
   },
-  apply(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem(this.KEY, theme);
+  apply(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem(this.KEY, t);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#09090B' : '#F1F5F9');
+    if (meta) meta.setAttribute('content', t === 'dark' ? '#09090B' : '#F1F5F9');
   },
   toggle() {
-    const current = document.documentElement.getAttribute('data-theme');
-    this.apply(current === 'dark' ? 'light' : 'dark');
+    this.apply(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
   },
 };
 
 /* -------------------------------------------------------------
-   5. HASH SHA-256 (Web Crypto API)
+   6. HASH SHA-256
    ------------------------------------------------------------- */
 async function sha256(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /* -------------------------------------------------------------
-   6. LEITURA DE SELOS DIGITAIS
-   Detecta assinaturas PAdES (PDF), PKCS#7 (DER / .p7s),
-   XMLDSig (XML) e assinaturas em containers ZIP (OOXML/ODF).
+   7. EXTRAÇÃO DE TEXTO E CAMPOS
    ------------------------------------------------------------- */
-function detectExtension(name) {
-  const m = name.match(/\.([a-z0-9]+)$/i);
-  return m ? m[1].toLowerCase() : '';
+const detectExt = (name) => (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+
+async function extractText(file, buffer) {
+  const ext = detectExt(file.name);
+  // Formatos texto-legíveis → decode UTF-8
+  if (['txt', 'csv', 'json', 'xml', 'md', 'html', 'htm'].includes(ext)) {
+    return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+  }
+  // PDF e binários → scan latin1 (captura strings de texto embutidas)
+  return new TextDecoder('latin1', { fatal: false }).decode(buffer);
 }
 
-async function inspectSeal(file, buffer) {
-  const bytes  = new Uint8Array(buffer.slice(0, Math.min(buffer.byteLength, 4 * 1024 * 1024)));
-  const ext    = detectExtension(file.name);
-  const result = {
-    kind: ext.toUpperCase() || 'BIN',
-    signed: false,
-    standard: null,
-    details: [],
-    level: 'none', // none | basic | icp
+function toNumberBR(s) {
+  if (s == null) return null;
+  const clean = String(s).replace(/[^\d.,-]/g, '').trim();
+  if (!clean) return null;
+  // Heurística BR: "50.000,00" → 50000.00 ; "50,5" → 50.5 ; "50000" → 50000
+  let n;
+  if (/,\d{1,2}$/.test(clean)) n = clean.replace(/\./g, '').replace(',', '.');
+  else n = clean.replace(/,/g, '');
+  const v = parseFloat(n);
+  return Number.isFinite(v) ? v : null;
+}
+
+function extractFields(text, ext, filename) {
+  const fields = {};
+
+  // ---- Tentar JSON estruturado (formato canônico OmniLicit) ----
+  if (ext === 'json') {
+    try {
+      const obj = JSON.parse(text);
+      if (obj && typeof obj === 'object') {
+        fields.processo      = obj.processo || obj.processNumber || obj.numeroProcesso || null;
+        fields.objeto        = obj.objeto   || obj.object        || null;
+        fields.quantidade    = obj.quantidade ?? obj.qtd ?? obj.quantity ?? null;
+        fields.unidade       = obj.unidade  || obj.unit || null;
+        fields.valorEstimado = obj.valorEstimado ?? obj.valor ?? obj.estimatedValue ?? null;
+        fields.orgao         = obj.orgao    || obj.org || obj.unidadeGestora || null;
+        fields.uasg          = obj.uasg     || null;
+        fields.data          = obj.data     || obj.date || null;
+        fields.responsavel   = obj.responsavel || obj.responsible || null;
+        fields.modulo        = obj.modulo   || null;
+        return cleanFields(fields);
+      }
+    } catch { /* segue para regex */ }
+  }
+
+  // ---- Extração por regex (fallback universal) ----
+  const first = (re) => {
+    const m = text.match(re);
+    return m ? (m[1] || m[2] || '').trim() : null;
   };
 
-  // --- PDF / PAdES ---
+  fields.processo = first(/processo(?:\s+n?[º°.:]*)?\s*[:\-]?\s*([\w./-]{4,40})/i);
+  fields.objeto   = first(/objeto\s*(?:do\s+processo|da\s+contrata[çc][ãa]o)?\s*[:\-]\s*([^\n\r]{10,300})/i);
+  fields.quantidade = first(/(?:quantidade|qtd\.?|quantitativo)\s*[:\-]?\s*([\d.,]{1,20})/i);
+  fields.unidade    = first(/unidade\s*(?:de\s*medida)?\s*[:\-]?\s*([A-Za-zçãáéíóúâêô]{1,15})/i);
+  fields.valorEstimado = first(/(?:valor\s+(?:estimado|total|global|de\s+refer[êe]ncia)?)\s*[:\-]?\s*R?\$?\s*([\d.,]{3,25})/i);
+  fields.orgao  = first(/(?:[óo]rg[ãa]o|unidade\s+gestora|entidade)\s*[:\-]\s*([^\n\r]{3,120})/i);
+  fields.uasg   = first(/uasg\s*[:\-]?\s*(\d{6})/i);
+  fields.data   = first(/data\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  fields.responsavel = first(/respons[áa]vel\s*[:\-]\s*([^\n\r]{3,120})/i);
+
+  return cleanFields(fields);
+}
+
+function cleanFields(f) {
+  const out = {};
+  for (const k of Object.keys(f)) {
+    const v = f[k];
+    if (v === null || v === undefined || v === '') continue;
+    if (k === 'quantidade')     out[k] = typeof v === 'number' ? v : toNumberBR(v);
+    else if (k === 'valorEstimado') out[k] = typeof v === 'number' ? v : toNumberBR(v);
+    else out[k] = String(v).trim().replace(/\s+/g, ' ');
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------
+   8. LEITURA DE SELOS DIGITAIS
+   ------------------------------------------------------------- */
+function inspectSeal(file, buffer) {
+  const ext = detectExt(file.name);
+  const bytes = new Uint8Array(buffer.slice(0, Math.min(buffer.byteLength, 4 * 1024 * 1024)));
+  const res = { signed: false, standard: null, level: 'none', details: [] };
+
   const isPDF = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
   if (isPDF || ext === 'pdf') {
-    result.kind = 'PDF';
     const text = new TextDecoder('latin1').decode(bytes);
-
     if (/\/ByteRange\s*\[/.test(text) || /\/Type\s*\/Sig\b/.test(text)) {
-      result.signed    = true;
-      result.standard  = 'PAdES / PKCS#7';
-      result.level     = 'basic';
-      result.details.push('Assinatura digital embutida (dicionário /Sig)');
-      const count = (text.match(/\/Type\s*\/Sig\b/g) || []).length || 1;
-      result.details.push(`${count} assinatura(s) detectada(s)`);
+      res.signed = true; res.standard = 'PAdES / PKCS#7'; res.level = 'basic';
+      res.details.push('Assinatura embutida (/Sig)');
     }
-
-    if (/adbe\.pkcs7\.detached/i.test(text)) result.details.push('SubFilter: adbe.pkcs7.detached');
-    if (/ETSI\.CAdES\.detached/i.test(text)) {
-      result.standard = 'PAdES-BES (ETSI)';
-      result.details.push('SubFilter: ETSI.CAdES.detached');
-    }
-    if (/\/DocMDP|\/Perms\b/.test(text)) result.details.push('Certificação DocMDP presente');
-
-    // ICP-Brasil: OIDs típicos (2.16.76.1.3 / 2.16.76.1.7) — busca textual como heurística
-    if (/(2\.16\.76\.1\.3|2\.16\.76\.1\.7|ICP-Brasil)/i.test(text)) {
-      result.level = 'icp';
-      result.details.push('Indícios de certificado ICP-Brasil');
-    }
+    if (/adbe\.pkcs7\.detached/i.test(text)) res.details.push('SubFilter adbe.pkcs7.detached');
+    if (/ETSI\.CAdES\.detached/i.test(text)) { res.standard = 'PAdES-BES (ETSI)'; res.details.push('SubFilter ETSI.CAdES'); }
+    if (/(2\.16\.76\.1\.3|2\.16\.76\.1\.7|ICP-Brasil)/i.test(text)) { res.level = 'icp'; res.details.push('Indícios ICP-Brasil'); }
   }
 
-  // --- PKCS#7 DER (30 82 ...) ---
-  if (!result.signed && bytes[0] === 0x30 && (bytes[1] & 0x80)) {
-    result.signed   = true;
-    result.kind     = ext === 'p7s' ? 'P7S' : 'PKCS#7';
-    result.standard = 'PKCS#7 / CMS';
-    result.level    = 'basic';
-    result.details.push('Estrutura ASN.1 / CMS detectada');
-    if (ext === 'p7s') result.details.push('Assinatura destacada (detached signature)');
+  if (!res.signed && bytes[0] === 0x30 && (bytes[1] & 0x80)) {
+    res.signed = true; res.standard = 'PKCS#7 / CMS'; res.level = 'basic';
+    res.details.push('Estrutura ASN.1 detectada');
   }
 
-  // --- PKCS#12 (.p12 / .pfx) ---
-  if (ext === 'p12' || ext === 'pfx') {
-    result.signed   = true;
-    result.kind     = 'PKCS#12';
-    result.standard = 'Container PKCS#12';
-    result.level    = 'basic';
-    result.details.push('Possível chave/certificado em container');
-  }
-
-  // --- XML Signature (XMLDSig) ---
-  if (['xml', 'xsd', 'nfe', 'cte', 'mdfe'].includes(ext)) {
-    result.kind = 'XML';
+  if (['xml', 'nfe', 'cte'].includes(ext)) {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    if (/<Signature[\s>]/i.test(text) || /xmldsig/i.test(text)) {
-      result.signed   = true;
-      result.standard = 'XMLDSig';
-      result.level    = 'basic';
-      result.details.push('Elemento <Signature> detectado');
-    }
-    if (/<X509Certificate>/i.test(text)) result.details.push('Certificado X.509 embutido');
-    if (/ICP-Brasil/i.test(text)) {
-      result.level = 'icp';
-      result.details.push('Cadeia ICP-Brasil referenciada');
-    }
+    if (/<Signature[\s>]/i.test(text)) { res.signed = true; res.standard = 'XMLDSig'; res.level = 'basic'; res.details.push('Elemento <Signature>'); }
+    if (/ICP-Brasil/i.test(text)) { res.level = 'icp'; res.details.push('Cadeia ICP-Brasil'); }
   }
 
-  // --- OOXML / ODF (ZIP) ---
-  const isZip = bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04;
-  if (isZip && !result.signed) {
-    result.details.push('Container ZIP (verificação de assinatura requer extração)');
-  }
-
-  if (!result.signed && !result.details.length) {
-    result.details.push('Nenhum selo digital identificado');
-  }
-
-  return result;
+  if (!res.details.length) res.details.push('Nenhum selo identificado');
+  return res;
 }
 
 /* -------------------------------------------------------------
-   7. RENDER — KPIs
+   9. ROTEAMENTO AUTOMÁTICO DE ARQUIVO → SLOT
    ------------------------------------------------------------- */
+function detectSlotFor(filename, text, fields) {
+  const low = (filename + ' ' + text.slice(0, 3000)).toLowerCase();
+
+  // 1) Metadado explícito
+  const modulo = (fields?.modulo || '').toLowerCase();
+  if (/dfd|licitareq|formaliza/.test(modulo)) return 'dfd';
+  if (/etp|estudo/.test(modulo))              return 'etp';
+  if (/licitatr|^tr|termo/.test(modulo))      return 'tr';
+  if (/edital/.test(modulo))                  return 'edital';
+  if (/contrato|ata/.test(modulo))            return 'contrato';
+
+  // 2) Nome do arquivo
+  if (/licitareq|[-_ .]dfd|formaliza/.test(low))    return 'dfd';
+  if (/licitaetp|[-_ .]etp|estudo\s+t[ée]cnico/.test(low)) return 'etp';
+  if (/licitatr|[-_ .]tr[._]|termo\s+de\s+refer/.test(low)) return 'tr';
+  if (/edital/.test(low))                            return 'edital';
+  if (/contrato|ata\s+de\s+registro/.test(low))      return 'contrato';
+
+  return null;
+}
+
+/* -------------------------------------------------------------
+   10. PROCESSAMENTO DE ARQUIVO
+   ------------------------------------------------------------- */
+async function processFile(file) {
+  const buffer = await file.arrayBuffer();
+  const hash   = await sha256(buffer);
+  const ext    = detectExt(file.name);
+  const text   = await extractText(file, buffer);
+  const seal   = inspectSeal(file, buffer);
+  const fields = extractFields(text, ext, file.name);
+
+  return {
+    file: { name: file.name, size: file.size, ext, mime: file.type || '' },
+    hash, text, seal, fields,
+    loadedAt: new Date(),
+  };
+}
+
+async function loadFileIntoSlot(slotId, file) {
+  try {
+    const payload = await processFile(file);
+    payload.status = 'ok';
+    STATE.slots[slotId] = payload;
+    toast(`${SLOTS.find(s => s.id === slotId).code}: ${file.name} carregado.`, 'ok');
+  } catch (err) {
+    console.error('[LicitaAudit] erro', err);
+    toast(`Falha ao processar ${file.name}`, 'danger');
+  }
+  refreshAll();
+}
+
+async function loadBulk(files) {
+  const list = Array.from(files);
+  if (!list.length) return;
+
+  const routing = { matched: [], unmatched: [] };
+  for (const file of list) {
+    const buffer = await file.arrayBuffer();
+    const text = new TextDecoder('latin1').decode(buffer.slice(0, 4000));
+    const ext  = detectExt(file.name);
+    const fields = extractFields(await extractText(file, buffer), ext, file.name);
+    const target = detectSlotFor(file.name, text, fields);
+
+    if (target) routing.matched.push({ file, slotId: target });
+    else routing.unmatched.push(file);
+  }
+
+  for (const { file, slotId } of routing.matched) {
+    await loadFileIntoSlot(slotId, file);
+  }
+
+  if (routing.unmatched.length) {
+    toast(`${routing.unmatched.length} arquivo(s) sem módulo identificado. Use os slots individuais.`, 'warn', 5000);
+  }
+  refreshAll();
+}
+
+/* -------------------------------------------------------------
+   11. MOTOR DE CRUZAMENTO (CROSS-CHECK)
+   ------------------------------------------------------------- */
+function getLoaded() {
+  return Object.entries(STATE.slots)
+    .filter(([, s]) => s && s.file)
+    .map(([id, s]) => ({ id, ...s, code: SLOTS.find(x => x.id === id).code }));
+}
+
+function jaccard(a = '', b = '') {
+  const setA = new Set(String(a).toLowerCase().split(/\W+/).filter(w => w.length > 3));
+  const setB = new Set(String(b).toLowerCase().split(/\W+/).filter(w => w.length > 3));
+  if (!setA.size && !setB.size) return 1;
+  let inter = 0;
+  setA.forEach(w => { if (setB.has(w)) inter++; });
+  const union = new Set([...setA, ...setB]).size;
+  return union ? inter / union : 0;
+}
+
+function runCrossChecks() {
+  const div = [];
+  const loaded = getLoaded();
+
+  const add = (severity, category, title, description, modules, legalRef, field) =>
+    div.push({ id: uid(), severity, category, title, description, modules, legalRef, field });
+
+  // --- 1. Campos de identificação por módulo ---
+  const byField = (key) => loaded
+    .filter(x => x.fields?.[key] != null && x.fields[key] !== '')
+    .map(x => ({ id: x.id, code: x.code, value: x.fields[key] }));
+
+  // 1.1 Número do processo
+  const processos = byField('processo');
+  if (processos.length > 1) {
+    const ref = processos[0];
+    for (const p of processos.slice(1)) {
+      if (p.value !== ref.value) {
+        add('critical', 'Identificação',
+          'Divergência no número do processo',
+          `"${ref.value}" em ${ref.code} difere de "${p.value}" em ${p.code}.`,
+          [ref.code, p.code], 'Art. 12', 'processo');
+      }
+    }
+  }
+
+  // 1.2 Órgão / UASG
+  const orgaos = byField('orgao');
+  if (orgaos.length > 1) {
+    const ref = orgaos[0];
+    for (const o of orgaos.slice(1)) {
+      if (jaccard(ref.value, o.value) < 0.5) {
+        add('warning', 'Identificação',
+          'Divergência de órgão/unidade gestora',
+          `"${ref.value}" (${ref.code}) vs "${o.value}" (${o.code}).`,
+          [ref.code, o.code], 'Art. 12', 'orgao');
+      }
+    }
+  }
+  const uasgs = byField('uasg');
+  if (uasgs.length > 1) {
+    const ref = uasgs[0];
+    for (const u of uasgs.slice(1)) {
+      if (u.value !== ref.value) {
+        add('critical', 'Identificação',
+          'Divergência de UASG',
+          `UASG "${ref.value}" (${ref.code}) vs "${u.value}" (${u.code}).`,
+          [ref.code, u.code], 'Art. 12', 'uasg');
+      }
+    }
+  }
+
+  // 1.3 Quantidade
+  const qtds = byField('quantidade').map(x => ({ ...x, value: Number(x.value) }))
+    .filter(x => Number.isFinite(x.value));
+  if (qtds.length > 1) {
+    const ref = qtds[0];
+    for (const q of qtds.slice(1)) {
+      if (q.value !== ref.value) {
+        const delta = Math.abs(q.value - ref.value);
+        const pct = ref.value ? (delta / ref.value) * 100 : 100;
+        const sev = pct > 10 ? 'critical' : 'warning';
+        add(sev, 'Consistência',
+          'Divergência de quantitativo',
+          `Quantidade ${ref.value} (${ref.code}) vs ${q.value} (${q.code}). Diferença de ${delta} (${pct.toFixed(1)}%).`,
+          [ref.code, q.code], 'Art. 22', 'quantidade');
+      }
+    }
+  }
+
+  // 1.4 Valor estimado
+  const valores = byField('valorEstimado').map(x => ({ ...x, value: Number(x.value) }))
+    .filter(x => Number.isFinite(x.value) && x.value > 0);
+  if (valores.length > 1) {
+    const ref = valores[0];
+    for (const v of valores.slice(1)) {
+      const delta = Math.abs(v.value - ref.value);
+      const pct = ref.value ? (delta / ref.value) * 100 : 100;
+      if (pct > 5) {
+        const sev = pct > 20 ? 'critical' : 'warning';
+        add(sev, 'Consistência',
+          'Divergência de valor estimado',
+          `R$ ${ref.value.toLocaleString('pt-BR')} (${ref.code}) vs R$ ${v.value.toLocaleString('pt-BR')} (${v.code}). Diferença de ${pct.toFixed(1)}%.`,
+          [ref.code, v.code], 'Art. 23', 'valorEstimado');
+      }
+    }
+  }
+
+  // 1.5 Similaridade do objeto
+  const objetos = byField('objeto');
+  if (objetos.length > 1) {
+    const ref = objetos[0];
+    for (const o of objetos.slice(1)) {
+      const sim = jaccard(ref.value, o.value);
+      if (sim < 0.4) {
+        add('warning', 'Consistência',
+          'Objeto com baixa aderência entre módulos',
+          `Similaridade de apenas ${(sim * 100).toFixed(0)}% entre ${ref.code} e ${o.code}. Verificar alinhamento da descrição do objeto.`,
+          [ref.code, o.code], 'Art. 22', 'objeto');
+      }
+    }
+  }
+
+  // --- 2. Duplicidade de hashes ---
+  const hashMap = new Map();
+  loaded.forEach(x => {
+    if (!hashMap.has(x.hash)) hashMap.set(x.hash, []);
+    hashMap.get(x.hash).push(x.code);
+  });
+  hashMap.forEach((codes, h) => {
+    if (codes.length > 1) {
+      add('critical', 'Integridade',
+        'Hash SHA-256 duplicado entre módulos',
+        `Artefatos idênticos detectados em ${codes.join(', ')}. Possível duplicidade de upload ou arquivo incorreto. Hash: ${h.slice(0, 16)}…`,
+        codes, 'Art. 12', 'hash');
+    }
+  });
+
+  // --- 3. Completude documental ---
+  SLOTS.filter(s => s.required).forEach(s => {
+    const loaded = STATE.slots[s.id]?.file;
+    if (!loaded) {
+      add('critical', 'Completude',
+        `Módulo obrigatório ausente: ${s.code}`,
+        `${s.label} não foi importado no workspace. Sem este artefato, a instrução processual resta incompleta.`,
+        [s.code], s.articles[0], 'required');
+    }
+  });
+
+  // --- 4. Selos digitais ausentes em documentos críticos ---
+  loaded.forEach(x => {
+    if (!x.seal.signed) {
+      add('info', 'Assinatura',
+        `Documento sem selo digital: ${x.code}`,
+        `${x.file.name} não possui assinatura eletrônica detectada. Recomenda-se exigir assinatura ICP-Brasil para rastreabilidade.`,
+        [x.code], 'Art. 5º', 'seal');
+    }
+  });
+
+  // --- 5. Ausência de campos-chave ---
+  const criticalFields = ['processo', 'objeto', 'valorEstimado'];
+  loaded.forEach(x => {
+    criticalFields.forEach(f => {
+      if (!x.fields?.[f]) {
+        add('warning', 'Extração',
+          `Campo "${f}" não localizado em ${x.code}`,
+          `Não foi possível extrair "${f}" automaticamente. Verifique o formato do artefato ou preencha manualmente.`,
+          [x.code], 'Art. 12', f);
+      }
+    });
+  });
+
+  STATE.divergences = div;
+  return div;
+}
+
+/* -------------------------------------------------------------
+   12. CÁLCULO DE CONFORMIDADE AUTOMÁTICA
+   ------------------------------------------------------------- */
+function calcCompliance() {
+  const auto = {};
+  const loaded = getLoaded();
+  const loadedIds = new Set(loaded.map(x => x.id));
+
+  // Mapa artigo → módulos que o cobrem
+  const articleCoverage = {};
+  SLOTS.forEach(s => {
+    s.articles.forEach(a => {
+      const key = a.replace(/[^\d]/g, '');
+      if (!articleCoverage[key]) articleCoverage[key] = [];
+      articleCoverage[key].push(s.id);
+    });
+  });
+
+  LEGAL_MATRIX.forEach(item => {
+    const num = item.art.replace(/[^\d]/g, '');
+    const coverModules = articleCoverage[num] || [];
+    const covered = coverModules.some(id => loadedIds.has(id));
+
+    // Divergências críticas ligadas a este artigo
+    const divCrit = STATE.divergences.filter(d =>
+      d.severity === 'critical' && (d.legalRef === item.art || coverModules.includes(d.field))
+    );
+
+    let status;
+    if (!covered) status = 'warn';
+    else if (divCrit.length) status = 'fail';
+    else status = 'ok';
+
+    auto[item.id] = status;
+  });
+
+  STATE.autoCompliance = auto;
+}
+
+/* -------------------------------------------------------------
+   13. RENDERS
+   ------------------------------------------------------------- */
+function renderSidebar() {
+  const list = $('#slotList');
+  const loadedCount = Object.values(STATE.slots).filter(s => s?.file).length;
+
+  $('#sidebarSub').textContent = `${loadedCount} de ${SLOTS.length} módulos importados`;
+
+  list.innerHTML = SLOTS.map(slot => {
+    const st = STATE.slots[slot.id];
+    const hasFile = !!st?.file;
+    const divsForSlot = STATE.divergences.filter(d => d.modules?.includes(slot.code));
+    const hasCritical = divsForSlot.some(d => d.severity === 'critical');
+    const hasWarn = divsForSlot.some(d => d.severity === 'warning');
+
+    let cls = 'slot';
+    if (hasFile) cls += ' loaded';
+    if (hasFile && hasCritical) cls += ' has-alert';
+    else if (hasFile && hasWarn) cls += ' has-warn';
+
+    const meta = hasFile
+      ? `<span>${fmtBytes(st.file.size)}</span><span>·</span><span>${st.file.ext.toUpperCase()}</span>`
+      : `<span class="muted">${slot.required ? 'obrigatório' : 'opcional'}</span>`;
+
+    return `
+      <li class="${cls}" data-slot="${slot.id}" tabindex="0" role="button" aria-label="Carregar ${escapeAttr(slot.label)}">
+        <div class="slot-icon">${hasFile ? '✓' : '＋'}</div>
+        <div class="slot-info">
+          <div class="slot-name" title="${escapeAttr(hasFile ? st.file.name : slot.label)}">${escapeHTML(hasFile ? st.file.name : slot.label)}</div>
+          <div class="slot-meta">${meta}</div>
+        </div>
+        <div class="slot-actions">
+          ${hasFile ? `<button class="icon-mini danger" data-action="remove" data-slot="${slot.id}" title="Remover">✕</button>` : ''}
+          <button class="icon-mini" data-action="upload" data-slot="${slot.id}" title="Carregar arquivo">↑</button>
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  // Hash raiz do workspace
+  const hashes = getLoaded().map(x => x.hash).sort();
+  if (hashes.length) {
+    $('#workspaceHashWrap').hidden = false;
+    // Hash combinado (re-hash da concatenação ordenada)
+    const combined = hashes.join(':');
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(combined)).then(buf => {
+      const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      $('#workspaceHash').textContent = hex;
+      $('#workspaceHash').title = hex;
+    });
+  } else {
+    $('#workspaceHashWrap').hidden = true;
+  }
+}
+
 function renderKPIs() {
-  const seals = STATE.files.filter((f) => f.seal.signed).length;
-  const values = Object.values(STATE.compliance);
-  const ok   = values.filter((v) => v === 'ok').length;
-  const fail = values.filter((v) => v === 'fail').length;
+  const loaded = getLoaded();
+  const sealed = loaded.filter(x => x.seal.signed).length;
+  const critical = STATE.divergences.filter(d => d.severity === 'critical').length;
+
   const total = LEGAL_MATRIX.length;
+  const ok = LEGAL_MATRIX.filter(i => getEffectiveCompliance(i.id) === 'ok').length;
   const pct = total ? Math.round((ok / total) * 100) : 0;
 
-  $('#kpiFiles').textContent = STATE.files.length;
-  $('#kpiSeals').textContent = seals;
+  $('#kpiModules').textContent = `${loaded.length}/${SLOTS.length}`;
+  $('#kpiHashes').textContent = loaded.length;
+  $('#kpiSeals').textContent = sealed;
   $('#kpiCompliance').textContent = total ? `${pct}%` : '—';
-  $('#kpiRisks').textContent = fail;
+  $('#kpiCritical').textContent = critical;
 
-  $('#chipOk').textContent   = `${ok} conformes`;
-  $('#chipWarn').textContent = `${values.filter((v) => v === 'warn').length} pendentes`;
-  $('#chipFail').textContent = `${fail} não conformes`;
+  // Status badge
+  const badge = $('#statusBadgeText');
+  if (!loaded.length) badge.textContent = 'Workspace vazio';
+  else if (critical) badge.textContent = `${critical} alerta(s) crítico(s)`;
+  else badge.textContent = 'Workspace íntegro';
+
+  // Processo chip
+  const processos = loaded.map(x => x.fields?.processo).filter(Boolean);
+  $('#processChipValue').textContent = processos[0] || '— não identificado —';
 }
 
-/* -------------------------------------------------------------
-   8. RENDER — LISTA DE ARQUIVOS
-   ------------------------------------------------------------- */
-function renderFiles() {
-  const list = $('#fileList');
+function renderIntegrity() {
+  const grid = $('#integrityGrid');
+  const loaded = getLoaded();
 
-  if (!STATE.files.length) {
-    list.innerHTML = '<li class="empty">Nenhum artefato ingerido ainda.</li>';
+  if (!loaded.length) {
+    grid.innerHTML = '<div class="empty">Nenhum artefato carregado no workspace.</div>';
     return;
   }
 
-  list.innerHTML = STATE.files.map((f) => {
-    const short = f.hash ? `${f.hash.slice(0, 8)}…${f.hash.slice(-8)}` : '—';
-    const sealBadge = f.seal.signed
-      ? `<span class="status-dot dot-ok"></span> Selo: ${f.seal.standard || 'detectado'}`
-      : `<span class="status-dot dot-warn"></span> Sem selo`;
+  grid.innerHTML = loaded.map(x => {
+    const short = `${x.hash.slice(0, 10)}…${x.hash.slice(-10)}`;
+    const divs = STATE.divergences.filter(d => d.modules?.includes(x.code));
+    const hasCrit = divs.some(d => d.severity === 'critical');
+    const hasWarn = divs.some(d => d.severity === 'warning');
+    const status = hasCrit ? 'alert' : hasWarn ? 'warn' : 'ok';
+
+    const sealLine = x.seal.signed
+      ? `<span class="ok">Selo: ${escapeHTML(x.seal.standard || 'detectado')}</span>`
+      : `<span class="warn">Sem selo digital</span>`;
+
     return `
-      <li class="file-item" data-id="${f.id}">
-        <div class="file-icon">${f.ext || 'BIN'}</div>
-        <div class="file-meta">
-          <div class="file-name" title="${escapeAttr(f.name)}">${escapeHTML(f.name)}</div>
-          <div class="file-sub">
-            <span>${fmtBytes(f.size)}</span>
-            <span>${sealBadge}</span>
-            <span class="hash" data-copy="${f.hash}" title="Copiar hash SHA-256">SHA-256: ${short}</span>
-          </div>
+      <div class="int-card" data-status="${status}">
+        <div class="int-head">
+          <span class="int-code">${x.code}</span>
+          <span class="status-dot ${hasCrit ? 'dot-danger' : hasWarn ? 'dot-warn' : 'dot-ok'}"></span>
         </div>
-        <div class="file-icon" style="background:transparent;color:var(--accent)">✓</div>
-      </li>
+        <div class="int-file" title="${escapeAttr(x.file.name)}">${escapeHTML(x.file.name)}</div>
+        <div class="int-hash" data-copy="${x.hash}" title="Clique para copiar o hash SHA-256">SHA-256: ${short}</div>
+        <div class="int-foot">
+          <span>${fmtBytes(x.file.size)}</span>
+          ${sealLine}
+        </div>
+      </div>
     `;
   }).join('');
 }
 
-/* -------------------------------------------------------------
-   9. RENDER — SELOS DIGITAIS
-   ------------------------------------------------------------- */
-function renderSeals() {
-  const list = $('#sealList');
-  const sealed = STATE.files.filter((f) => f.seal.signed);
+function renderDivergences() {
+  const tbody = $('#divTableBody');
+  const divs = STATE.divergences;
 
-  if (!sealed.length) {
-    list.innerHTML = '<li class="empty">Aguardando artefatos assinados.</li>';
+  const count = { critical: 0, warning: 0, info: 0 };
+  divs.forEach(d => count[d.severity]++);
+  $('#chipCritical').textContent = `${count.critical} críticos`;
+  $('#chipWarning').textContent = `${count.warning} avisos`;
+  $('#chipInfo').textContent = `${count.info} informativos`;
+
+  if (!divs.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Nenhuma divergência detectada entre os módulos.</td></tr>';
     return;
   }
 
-  list.innerHTML = sealed.map((f) => `
-    <li class="seal-item">
-      <div class="seal-icon">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-        </svg>
-      </div>
-      <div class="file-meta">
-        <div class="file-name">${escapeHTML(f.name)}</div>
-        <div class="file-sub">
-          <strong style="color:var(--accent)">${f.seal.standard || 'Assinatura'}</strong>
-          <span>· ${f.seal.kind}</span>
-          <span>· Nível: ${f.seal.level === 'icp' ? 'ICP-Brasil (provável)' : 'Padrão'}</span>
-        </div>
-      </div>
-      <span class="status-dot dot-ok"></span>
-    </li>
+  const sevLabel = { critical: 'Crítico', warning: 'Aviso', info: 'Info' };
+  const sevClass = { critical: 'sev-critical', warning: 'sev-warning', info: 'sev-info' };
+
+  const order = { critical: 0, warning: 1, info: 2 };
+  const sorted = [...divs].sort((a, b) => order[a.severity] - order[b.severity]);
+
+  tbody.innerHTML = sorted.map(d => `
+    <tr>
+      <td><span class="sev-pill ${sevClass[d.severity]}">${sevLabel[d.severity]}</span></td>
+      <td><span class="legal-ref">${escapeHTML(d.category)}</span></td>
+      <td>
+        <strong style="display:block;margin-bottom:3px;color:var(--text-0)">${escapeHTML(d.title)}</strong>
+        <span style="color:var(--text-2);font-size:.78rem">${escapeHTML(d.description)}</span>
+      </td>
+      <td>${(d.modules || []).map(m => `<span class="mod-pill active">${escapeHTML(m)}</span>`).join('')}</td>
+      <td><span class="legal-ref">${escapeHTML(d.legalRef || '—')}</span></td>
+    </tr>
   `).join('');
 }
 
-/* -------------------------------------------------------------
-   10. RENDER — MATRIZ DE CONFORMIDADE
-   ------------------------------------------------------------- */
+function getEffectiveCompliance(id) {
+  return STATE.compliance[id] || STATE.autoCompliance[id] || null;
+}
+
 function renderCompliance() {
   const wrap = $('#complianceList');
 
-  wrap.innerHTML = LEGAL_MATRIX.map((item) => {
-    const status = STATE.compliance[item.id] || null;
+  const count = { ok: 0, warn: 0, fail: 0 };
+  LEGAL_MATRIX.forEach(i => {
+    const s = getEffectiveCompliance(i.id);
+    if (s === 'ok') count.ok++;
+    else if (s === 'warn') count.warn++;
+    else if (s === 'fail') count.fail++;
+  });
+  $('#chipOk').textContent = `${count.ok} conformes`;
+  $('#chipWarn').textContent = `${count.warn} pendentes`;
+  $('#chipFail').textContent = `${count.fail} não conformes`;
+
+  wrap.innerHTML = LEGAL_MATRIX.map(item => {
+    const status = getEffectiveCompliance(item.id);
+    const auto = STATE.autoCompliance[item.id];
+    const manual = STATE.compliance[item.id];
+    const isOverride = manual && manual !== auto;
+
     return `
       <div class="comp-item" data-id="${item.id}" data-status="${status || ''}">
         <div class="comp-head">
@@ -383,7 +710,7 @@ function renderCompliance() {
             status === 'ok' ? 'dot-ok' :
             status === 'warn' ? 'dot-warn' :
             status === 'fail' ? 'dot-danger' : ''
-          }"></span>
+          }" title="${isOverride ? 'Ajuste manual' : 'Status automático'}"></span>
         </div>
         <div class="comp-title">${escapeHTML(item.title)}</div>
         <div class="comp-desc">${escapeHTML(item.desc)}</div>
@@ -397,7 +724,92 @@ function renderCompliance() {
   }).join('');
 }
 
-function bindComplianceEvents() {
+function refreshAll() {
+  runCrossChecks();
+  calcCompliance();
+  renderSidebar();
+  renderKPIs();
+  renderIntegrity();
+  renderDivergences();
+  renderCompliance();
+}
+
+/* -------------------------------------------------------------
+   14. EVENTOS — SIDEBAR E DROPZONE INDIVIDUAL
+   ------------------------------------------------------------- */
+function bindSidebar() {
+  const list = $('#slotList');
+
+  // Click delegation
+  list.addEventListener('click', (e) => {
+    const actionBtn = e.target.closest('[data-action]');
+    if (actionBtn) {
+      e.stopPropagation();
+      const slotId = actionBtn.dataset.slot;
+      const action = actionBtn.dataset.action;
+      if (action === 'remove') {
+        delete STATE.slots[slotId];
+        refreshAll();
+        toast('Módulo removido do workspace.', 'warn');
+      } else if (action === 'upload') {
+        openFilePickerFor(slotId);
+      }
+      return;
+    }
+    const slotEl = e.target.closest('.slot');
+    if (slotEl) openFilePickerFor(slotEl.dataset.slot);
+  });
+
+  // Keyboard
+  list.addEventListener('keydown', (e) => {
+    const slotEl = e.target.closest('.slot');
+    if (!slotEl) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFilePickerFor(slotEl.dataset.slot); }
+  });
+
+  // Drag & drop por slot
+  list.addEventListener('dragover', (e) => {
+    const slotEl = e.target.closest('.slot');
+    if (!slotEl) return;
+    e.preventDefault();
+    slotEl.classList.add('dragover');
+  });
+  list.addEventListener('dragleave', (e) => {
+    const slotEl = e.target.closest('.slot');
+    if (slotEl) slotEl.classList.remove('dragover');
+  });
+  list.addEventListener('drop', async (e) => {
+    const slotEl = e.target.closest('.slot');
+    if (!slotEl) return;
+    e.preventDefault();
+    slotEl.classList.remove('dragover');
+    const file = e.dataTransfer.files?.[0];
+    if (file) await loadFileIntoSlot(slotEl.dataset.slot, file);
+  });
+
+  // Bulk
+  $('#btnBulk').addEventListener('click', () => $('#bulkInput').click());
+  $('#bulkInput').addEventListener('change', (e) => {
+    loadBulk(e.target.files);
+    e.target.value = '';
+  });
+}
+
+function openFilePickerFor(slotId) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '*/*';
+  inp.addEventListener('change', async () => {
+    const f = inp.files?.[0];
+    if (f) await loadFileIntoSlot(slotId, f);
+  });
+  inp.click();
+}
+
+/* -------------------------------------------------------------
+   15. EVENTOS — COMPLIANCE MANUAL
+   ------------------------------------------------------------- */
+function bindCompliance() {
   $('#complianceList').addEventListener('click', (e) => {
     const btn = e.target.closest('.comp-btn');
     if (!btn) return;
@@ -405,131 +817,61 @@ function bindComplianceEvents() {
     const id = card.dataset.id;
     const set = btn.dataset.set;
 
-    STATE.compliance[id] = STATE.compliance[id] === set ? null : set;
-    card.dataset.status = STATE.compliance[id] || '';
-    if (!STATE.compliance[id]) delete STATE.compliance[id];
+    if (STATE.compliance[id] === set) delete STATE.compliance[id];
+    else STATE.compliance[id] = set;
 
-    // Atualiza visual dos botões
-    card.querySelectorAll('.comp-btn').forEach((b) => {
-      b.classList.remove('active-ok', 'active-warn', 'active-fail');
-    });
-    if (STATE.compliance[id]) {
-      btn.classList.add(
-        set === 'ok' ? 'active-ok' :
-        set === 'warn' ? 'active-warn' : 'active-fail'
-      );
-    }
-
-    // Atualiza dot
-    const dot = card.querySelector('.comp-head .status-dot');
-    dot.className = 'status-dot';
-    if (STATE.compliance[id] === 'ok')   dot.classList.add('dot-ok');
-    if (STATE.compliance[id] === 'warn') dot.classList.add('dot-warn');
-    if (STATE.compliance[id] === 'fail') dot.classList.add('dot-danger');
-
+    renderCompliance();
     renderKPIs();
   });
 }
 
 /* -------------------------------------------------------------
-   11. INGESTÃO DE ARQUIVOS
+   16. EVENTOS — GLOBAIS
    ------------------------------------------------------------- */
-async function ingestFiles(fileList) {
-  const files = Array.from(fileList);
-  if (!files.length) return;
+function bindGlobal() {
+  $('#themeToggle').addEventListener('click', () => Theme.toggle());
 
-  const total = files.length;
-  let done = 0;
-  $('#progressWrap').hidden = false;
-
-  for (const file of files) {
-    try {
-      const buffer = await file.arrayBuffer();
-      const hash   = await sha256(buffer);
-      const seal   = await inspectSeal(file, buffer);
-
-      STATE.files.push({
-        id: uid(),
-        name: file.name,
-        size: file.size,
-        type: file.type || '',
-        ext: detectExtension(file.name),
-        hash,
-        seal,
-        at: new Date(),
-      });
-
-      done++;
-      const pct = Math.round((done / total) * 100);
-      $('#progressBar').style.width = `${pct}%`;
-      $('#progressText').textContent = `${pct}%`;
-    } catch (err) {
-      console.error('[LicitaAudit] falha ao processar', file.name, err);
-      toast(`Falha ao processar: ${file.name}`, 'danger');
-    }
-  }
-
-  renderFiles();
-  renderSeals();
-  renderKPIs();
-
-  setTimeout(() => {
-    $('#progressWrap').hidden = true;
-    $('#progressBar').style.width = '0%';
-    $('#progressText').textContent = '0%';
-  }, 600);
-
-  toast(`${files.length} artefato(s) auditado(s) com sucesso.`, 'ok');
-}
-
-function bindDropzone() {
-  const dz = $('#dropzone');
-  const input = $('#fileInput');
-
-  input.addEventListener('change', (e) => {
-    ingestFiles(e.target.files);
-    input.value = '';
+  $('#btnReverify').addEventListener('click', () => {
+    refreshAll();
+    toast('Verificação cruzada reexecutada.', 'ok');
   });
 
-  ['dragenter', 'dragover'].forEach((ev) => {
-    dz.addEventListener(ev, (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dz.classList.add('dragover');
-    });
+  $('#btnReset').addEventListener('click', () => {
+    if (!Object.keys(STATE.slots).length && !STATE.divergences.length) return;
+    if (!confirm('Confirma reinício do workspace? Todos os documentos e análises serão descartados.')) return;
+    STATE.slots = {};
+    STATE.divergences = [];
+    STATE.compliance = {};
+    STATE.autoCompliance = {};
+    STATE.startedAt = new Date();
+    refreshAll();
+    toast('Workspace reiniciado.', 'ok');
   });
 
-  ['dragleave', 'drop'].forEach((ev) => {
-    dz.addEventListener(ev, (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dz.classList.remove('dragover');
-    });
+  $('#btnExportJSON').addEventListener('click', exportJSON);
+  $('#btnExportPDF').addEventListener('click', exportPDF);
+
+  $('#btnCopyWsHash').addEventListener('click', () => {
+    const h = $('#workspaceHash').textContent;
+    if (h && h !== '—') navigator.clipboard.writeText(h).then(() => toast('Hash do workspace copiado.', 'ok'));
   });
 
-  dz.addEventListener('drop', (e) => {
-    const files = e.dataTransfer?.files;
-    if (files && files.length) ingestFiles(files);
-  });
-
-  dz.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      input.click();
-    }
+  // Copiar hashes individuais
+  document.addEventListener('click', (e) => {
+    const h = e.target.closest('[data-copy]');
+    if (!h || !h.dataset.copy) return;
+    navigator.clipboard.writeText(h.dataset.copy).then(() => toast('Hash copiado.', 'ok'));
   });
 }
 
 /* -------------------------------------------------------------
-   12. EXPORTAÇÃO — LAUDO
+   17. EXPORTAÇÃO — TRILHA JSON
    ------------------------------------------------------------- */
-function buildAuditPayload() {
-  const counts = {
-    total: LEGAL_MATRIX.length,
-    ok:    0, warn: 0, fail: 0, pending: 0,
-  };
-  LEGAL_MATRIX.forEach((i) => {
-    const s = STATE.compliance[i.id];
+function buildPayload() {
+  const loaded = getLoaded();
+  const counts = { ok: 0, warn: 0, fail: 0, pending: 0 };
+  LEGAL_MATRIX.forEach(i => {
+    const s = getEffectiveCompliance(i.id);
     if (s === 'ok') counts.ok++;
     else if (s === 'warn') counts.warn++;
     else if (s === 'fail') counts.fail++;
@@ -538,31 +880,37 @@ function buildAuditPayload() {
 
   return {
     geradoEm: new Date().toISOString(),
-    geradoEmBR: fmtDate(new Date()),
+    geradoEmBR: fmtDate(),
     iniciadoEm: STATE.startedAt.toISOString(),
     norma: 'Lei nº 14.133/2021',
-    modulo: 'LicitaAudit · OmniLicit',
-    artefatos: STATE.files.map((f) => ({
-      id: f.id,
-      nome: f.name,
-      tamanhoBytes: f.size,
-      extensao: f.ext,
-      mime: f.type,
-      sha256: f.hash,
+    modulo: 'LicitaAudit Workspace · OmniLicit',
+    processo: loaded.find(x => x.fields?.processo)?.fields?.processo || null,
+    workspaceHash: $('#workspaceHash').textContent || null,
+    artefatos: loaded.map(x => ({
+      slot: x.id,
+      modulo: x.code,
+      nome: x.file.name,
+      tamanhoBytes: x.file.size,
+      extensao: x.file.ext,
+      sha256: x.hash,
+      camposExtraidos: x.fields,
       seloDigital: {
-        assinado: f.seal.signed,
-        padrao: f.seal.standard,
-        nivel: f.seal.level,
-        detalhes: f.seal.details,
+        assinado: x.seal.signed,
+        padrao: x.seal.standard,
+        nivel: x.seal.level,
+        detalhes: x.seal.details,
       },
-      registradoEm: f.at.toISOString(),
+      carregadoEm: x.loadedAt.toISOString(),
     })),
-    conformidade: LEGAL_MATRIX.map((i) => ({
+    divergencias: STATE.divergences,
+    conformidade: LEGAL_MATRIX.map(i => ({
       id: i.id,
       artigo: i.art,
       titulo: i.title,
       descricao: i.desc,
-      status: STATE.compliance[i.id] || 'pendente',
+      status: getEffectiveCompliance(i.id),
+      automatico: STATE.autoCompliance[i.id],
+      manual: STATE.compliance[i.id] || null,
     })),
     resumo: counts,
   };
@@ -571,219 +919,291 @@ function buildAuditPayload() {
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
 function exportJSON() {
-  if (!STATE.files.length) {
-    toast('Nenhum artefato para exportar.', 'warn');
-    return;
-  }
-  const data = buildAuditPayload();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  if (!getLoaded().length) { toast('Workspace vazio — nada para exportar.', 'warn'); return; }
+  const blob = new Blob([JSON.stringify(buildPayload(), null, 2)], { type: 'application/json' });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   downloadBlob(blob, `licitaudit-trilha-${stamp}.json`);
   toast('Trilha JSON exportada.', 'ok');
 }
 
-function exportHTML() {
-  if (!STATE.files.length) {
-    toast('Nenhum artefato para exportar.', 'warn');
-    return;
+/* -------------------------------------------------------------
+   18. EXPORTAÇÃO — LAUDO EM PDF (pdfMake)
+   ------------------------------------------------------------- */
+function exportPDF() {
+  if (!window.pdfMake) { toast('pdfMake indisponível (offline?).', 'danger'); return; }
+  if (!getLoaded().length) { toast('Workspace vazio — nada para exportar.', 'warn'); return; }
+
+  const data = buildPayload();
+  const criadoEm = data.geradoEmBR;
+
+  const statusLabel = (s) => s === 'ok' ? 'CONFORME' : s === 'warn' ? 'PENDENTE' : s === 'fail' ? 'NÃO CONFORME' : 'NÃO AVALIADO';
+  const statusColor = (s) => s === 'ok' ? '#10B981' : s === 'warn' ? '#F59E0B' : s === 'fail' ? '#EF4444' : '#64748B';
+  const sevColor = (s) => s === 'critical' ? '#EF4444' : s === 'warning' ? '#F59E0B' : '#38BDF8';
+
+  // --- Cabeçalho ---
+  const headerContent = [
+    {
+      columns: [
+        {
+          width: '*',
+          stack: [
+            { text: 'LAUDO DE AUDITORIA', fontSize: 18, bold: true, color: '#0F172A' },
+            { text: 'Workspace LicitaAudit · OmniLicit', fontSize: 11, color: '#0D9488', margin: [0, 2, 0, 0] },
+            { text: 'Conformidade — Lei nº 14.133/2021', fontSize: 9, color: '#64748B', margin: [0, 1, 0, 0] },
+          ],
+        },
+        {
+          width: 'auto',
+          stack: [
+            { text: `Emitido em: ${criadoEm}`, fontSize: 8, color: '#64748B', alignment: 'right' },
+            { text: `Sessão: ${fmtDate(new Date(data.iniciadoEm))}`, fontSize: 8, color: '#64748B', alignment: 'right', margin: [0, 2, 0, 0] },
+            { text: `Processo: ${data.processo || '—'}`, fontSize: 8, bold: true, color: '#0D9488', alignment: 'right', margin: [0, 2, 0, 0] },
+          ],
+        },
+      ],
+      margin: [0, 0, 0, 16],
+    },
+    { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5, lineColor: '#0D9488' }] },
+  ];
+
+  // --- Sumário executivo ---
+  const summaryBlock = [
+    { text: '1 · SUMÁRIO EXECUTIVO', fontSize: 11, bold: true, color: '#0F172A', margin: [0, 20, 0, 8] },
+    {
+      columns: [
+        { width: '*', stack: [
+          { text: 'Módulos importados', fontSize: 8, color: '#64748B' },
+          { text: `${data.artefatos.length} / ${SLOTS.length}`, fontSize: 18, bold: true, color: '#0D9488' },
+        ]},
+        { width: '*', stack: [
+          { text: 'Conformes', fontSize: 8, color: '#64748B' },
+          { text: String(data.resumo.ok), fontSize: 18, bold: true, color: '#10B981' },
+        ]},
+        { width: '*', stack: [
+          { text: 'Pendentes', fontSize: 8, color: '#64748B' },
+          { text: String(data.resumo.warn + data.resumo.pending), fontSize: 18, bold: true, color: '#F59E0B' },
+        ]},
+        { width: '*', stack: [
+          { text: 'Não conformes', fontSize: 8, color: '#64748B' },
+          { text: String(data.resumo.fail), fontSize: 18, bold: true, color: '#EF4444' },
+        ]},
+      ],
+      margin: [0, 0, 0, 6],
+    },
+    {
+      text: [
+        { text: 'Hash do Workspace (SHA-256 raiz): ', fontSize: 8, bold: true, color: '#0F172A' },
+        { text: data.workspaceHash || '—', fontSize: 8, font: 'Roboto', color: '#0D9488' },
+      ],
+      margin: [0, 4, 0, 0],
+    },
+  ];
+
+  // --- Tabela de artefatos ---
+  const artBody = [
+    [
+      { text: 'Módulo', style: 'th' },
+      { text: 'Artefato', style: 'th' },
+      { text: 'SHA-256', style: 'th' },
+      { text: 'Selo', style: 'th' },
+      { text: 'Tamanho', style: 'th' },
+    ],
+    ...data.artefatos.map(a => [
+      { text: a.modulo, fontSize: 8, bold: true, color: '#0D9488' },
+      { text: a.nome, fontSize: 8 },
+      { text: a.sha256 || '—', fontSize: 7, color: '#334155' },
+      { text: a.seloDigital.assinado ? (a.seloDigital.padrao || 'Assinado') : 'sem selo', fontSize: 7, color: a.seloDigital.assinado ? '#10B981' : '#F59E0B' },
+      { text: fmtBytes(a.tamanhoBytes), fontSize: 8, alignment: 'right' },
+    ]),
+  ];
+
+  const artifactsBlock = [
+    { text: '2 · INTEGRIDADE DOCUMENTAL', fontSize: 11, bold: true, color: '#0F172A', margin: [0, 20, 0, 8] },
+    {
+      table: {
+        headerRows: 1,
+        widths: [70, '*', 130, 80, 55],
+        body: artBody,
+      },
+      layout: {
+        fillColor: (r) => r === 0 ? '#F1F5F9' : null,
+        hLineColor: () => '#E2E8F0',
+        vLineColor: () => '#E2E8F0',
+        hLineWidth: () => 0.5,
+        vLineWidth: () => 0.5,
+        paddingLeft: () => 6, paddingRight: () => 6, paddingTop: () => 4, paddingBottom: () => 4,
+      },
+    },
+  ];
+
+  // --- Tabela de divergências ---
+  const divBody = [
+    [
+      { text: 'Severidade', style: 'th' },
+      { text: 'Categoria', style: 'th' },
+      { text: 'Descrição', style: 'th' },
+      { text: 'Módulos', style: 'th' },
+      { text: 'Base legal', style: 'th' },
+    ],
+    ...(data.divergencias.length
+      ? data.divergencias.map(d => [
+          { text: d.severity.toUpperCase(), fontSize: 7, bold: true, color: sevColor(d.severity) },
+          { text: d.category, fontSize: 7 },
+          { stack: [
+              { text: d.title, fontSize: 8, bold: true, color: '#0F172A' },
+              { text: d.description, fontSize: 7, color: '#334155' },
+            ]},
+          { text: (d.modules || []).join(', '), fontSize: 7, color: '#0D9488' },
+          { text: d.legalRef || '—', fontSize: 7, color: '#64748B' },
+        ])
+      : [[{ text: 'Nenhuma divergência detectada.', fontSize: 8, italics: true, color: '#64748B', colSpan: 5, alignment: 'center' }, {}, {}, {}, {}]]
+    ),
+  ];
+
+  const divergencesBlock = [
+    { text: '3 · DIVERGÊNCIAS E ALERTAS CRUZADOS', fontSize: 11, bold: true, color: '#0F172A', margin: [0, 20, 0, 8] },
+    {
+      table: {
+        headerRows: 1,
+        widths: [55, 60, '*', 100, 60],
+        body: divBody,
+      },
+      layout: {
+        fillColor: (r) => r === 0 ? '#F1F5F9' : null,
+        hLineColor: () => '#E2E8F0',
+        vLineColor: () => '#E2E8F0',
+        hLineWidth: () => 0.5,
+        vLineWidth: () => 0.5,
+        paddingLeft: () => 6, paddingRight: () => 6, paddingTop: () => 4, paddingBottom: () => 4,
+      },
+    },
+  ];
+
+  // --- Matriz de conformidade ---
+  const compBody = [
+    [
+      { text: 'Artigo', style: 'th' },
+      { text: 'Requisito', style: 'th' },
+      { text: 'Status', style: 'th' },
+    ],
+    ...data.conformidade.map(c => [
+      { text: c.artigo, fontSize: 8, bold: true, color: '#0D9488' },
+      { stack: [
+          { text: c.titulo, fontSize: 8, bold: true, color: '#0F172A' },
+          { text: c.descricao, fontSize: 7, color: '#334155' },
+        ]},
+      { text: statusLabel(c.status), fontSize: 7, bold: true, color: statusColor(c.status) },
+    ]),
+  ];
+
+  const complianceBlock = [
+    { text: '4 · MATRIZ DE CONFORMIDADE — LEI Nº 14.133/2021', fontSize: 11, bold: true, color: '#0F172A', margin: [0, 20, 0, 8] },
+    {
+      table: {
+        headerRows: 1,
+        widths: [50, '*', 80],
+        body: compBody,
+      },
+      layout: {
+        fillColor: (r) => r === 0 ? '#F1F5F9' : null,
+        hLineColor: () => '#E2E8F0',
+        vLineColor: () => '#E2E8F0',
+        hLineWidth: () => 0.5,
+        vLineWidth: () => 0.5,
+        paddingLeft: () => 6, paddingRight: () => 6, paddingTop: () => 4, paddingBottom: () => 4,
+      },
+    },
+  ];
+
+  // --- Encerramento ---
+  const footerBlock = [
+    { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: '#E2E8F0' }], margin: [0, 26, 0, 12] },
+    {
+      columns: [
+        { width: '*', stack: [
+            { text: '___________________________________', fontSize: 8, color: '#64748B' },
+            { text: 'Auditor responsável', fontSize: 8, color: '#64748B', margin: [0, 2, 0, 0] },
+          ]},
+        { width: '*', stack: [
+            { text: '___________________________________', fontSize: 8, color: '#64748B' },
+            { text: 'Autoridade competente', fontSize: 8, color: '#64748B', margin: [0, 2, 0, 0] },
+          ]},
+      ],
+    },
+    {
+      text: 'Documento gerado automaticamente pelo módulo LicitaAudit · OmniLicit. Processamento 100% local — nenhum artefato foi transmitido a terceiros.',
+      fontSize: 7, color: '#94A3B8', italics: true, margin: [0, 20, 0, 0], alignment: 'center',
+    },
+  ];
+
+  const docDef = {
+    pageSize: 'A4',
+    pageMargins: [40, 50, 40, 50],
+    info: {
+      title: 'Laudo de Auditoria — LicitaAudit Workspace',
+      author: 'OmniLicit',
+      subject: 'Lei nº 14.133/2021',
+      keywords: 'licitação, auditoria, conformidade, omnicit, licitaudit',
+    },
+    content: [
+      ...headerContent,
+      ...summaryBlock,
+      ...artifactsBlock,
+      ...divergencesBlock,
+      ...complianceBlock,
+      ...footerBlock,
+    ],
+    defaultStyle: { font: 'Roboto', fontSize: 9, color: '#0F172A' },
+    styles: {
+      th: { fontSize: 8, bold: true, color: '#334155', fillColor: '#F1F5F9' },
+    },
+    footer: (currentPage, pageCount) => ({
+      columns: [
+        { text: `LicitaAudit · OmniLicit — ${criadoEm}`, fontSize: 7, color: '#94A3B8', margin: [40, 0, 0, 0] },
+        { text: `Página ${currentPage} de ${pageCount}`, fontSize: 7, color: '#94A3B8', alignment: 'right', margin: [0, 0, 40, 0] },
+      ],
+    }),
+  };
+
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    window.pdfMake.createPdf(docDef).download(`laudo-licitaudit-${stamp}.pdf`);
+    toast('Laudo executivo gerado em PDF.', 'ok');
+  } catch (err) {
+    console.error(err);
+    toast('Falha ao gerar PDF. Verifique o console.', 'danger');
   }
-
-  const data = buildAuditPayload();
-
-  const badgeColor = (s) =>
-    s === 'ok'   ? '#10B981' :
-    s === 'warn' ? '#F59E0B' :
-    s === 'fail' ? '#EF4444' : '#64748B';
-
-  const statusLabel = (s) =>
-    s === 'ok' ? 'CONFORME' :
-    s === 'warn' ? 'PENDENTE' :
-    s === 'fail' ? 'NÃO CONFORME' : 'NÃO AVALIADO';
-
-  const filesRows = data.artefatos.map((f) => `
-    <tr>
-      <td><strong>${escapeHTML(f.nome)}</strong><br>
-        <span class="muted">${f.extensao.toUpperCase() || 'BIN'} · ${fmtBytes(f.tamanhoBytes)}</span>
-      </td>
-      <td class="mono small">${f.sha256 || '—'}</td>
-      <td>
-        ${f.seloDigital.assinado
-          ? `<span class="pill ok">${escapeHTML(f.seloDigital.padrao || 'Assinado')}</span>`
-          : `<span class="pill warn">Sem selo</span>`}
-      </td>
-      <td class="muted small">${fmtDate(new Date(f.registradoEm))}</td>
-    </tr>
-  `).join('');
-
-  const compRows = data.conformidade.map((c) => `
-    <tr>
-      <td class="mono">${c.artigo}</td>
-      <td><strong>${escapeHTML(c.titulo)}</strong><br><span class="muted small">${escapeHTML(c.descricao)}</span></td>
-      <td><span class="pill" style="background:${badgeColor(c.status)}22;color:${badgeColor(c.status)};border:1px solid ${badgeColor(c.status)}55">${statusLabel(c.status)}</span></td>
-    </tr>
-  `).join('');
-
-  const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8" />
-<title>Laudo de Auditoria · LicitaAudit</title>
-<style>
-  :root { --accent:#0D9488; --blue:#1E40AF; --ink:#0F172A; --muted:#64748B; --line:#E2E8F0; --bg:#F8FAFC; }
-  * { box-sizing: border-box; }
-  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; color: var(--ink); background: var(--bg); margin:0; padding: 32px; }
-  .doc { max-width: 1080px; margin: 0 auto; background:#fff; border-radius:14px; box-shadow: 0 10px 32px rgba(15,23,42,.08); padding: 40px; }
-  .head { display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid var(--line); padding-bottom:20px; margin-bottom:28px; }
-  .head h1 { font-size:1.5rem; margin:0; letter-spacing:-.02em; }
-  .head h1 span { color: var(--accent); }
-  .head .meta { text-align:right; font-size:.82rem; color:var(--muted); }
-  .kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:32px; }
-  .kpi { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:14px 18px; }
-  .kpi b { display:block; font-size:1.4rem; font-family: ui-monospace, monospace; }
-  .kpi span { font-size:.72rem; text-transform:uppercase; color:var(--muted); letter-spacing:.08em; }
-  h2 { font-size:1rem; margin: 32px 0 12px; letter-spacing:-.01em; }
-  table { width:100%; border-collapse: collapse; font-size:.85rem; }
-  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align: top; }
-  th { background: var(--bg); font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
-  .mono { font-family: ui-monospace, SFMono-Regular, monospace; }
-  .small { font-size:.76rem; }
-  .muted { color:var(--muted); }
-  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:.72rem; font-weight:600; }
-  .pill.ok { background:#10B98122; color:#10B981; border:1px solid #10B98155; }
-  .pill.warn { background:#F59E0B22; color:#F59E0B; border:1px solid #F59E0B55; }
-  .foot { margin-top:42px; padding-top:20px; border-top:1px dashed var(--line); font-size:.76rem; color:var(--muted); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-  @media print { body { background:#fff; padding:0; } .doc { box-shadow:none; padding:24px; } }
-</style>
-</head>
-<body>
-  <div class="doc">
-    <div class="head">
-      <div>
-        <h1>Laudo de Auditoria <span>LicitaAudit</span></h1>
-        <div class="muted small">Módulo de auditoria do ecossistema <strong>OmniLicit</strong> · Norma: ${data.norma}</div>
-      </div>
-      <div class="meta">
-        <div><strong>Emitido em:</strong> ${data.geradoEmBR}</div>
-        <div><strong>Sessão iniciada em:</strong> ${fmtDate(new Date(data.iniciadoEm))}</div>
-        <div class="mono small">ID: ${uid().toUpperCase()}-${Date.now().toString(36).toUpperCase()}</div>
-      </div>
-    </div>
-
-    <div class="kpis">
-      <div class="kpi"><span>Artefatos</span><b>${data.resumo.total_artefatos ?? data.artefatos.length}</b></div>
-      <div class="kpi"><span>Conformes</span><b style="color:#10B981">${data.resumo.ok}</b></div>
-      <div class="kpi"><span>Pendentes</span><b style="color:#F59E0B">${data.resumo.warn + data.resumo.pending}</b></div>
-      <div class="kpi"><span>Não conformes</span><b style="color:#EF4444">${data.resumo.fail}</b></div>
-    </div>
-
-    <h2>1 · Integridade dos Artefatos (SHA-256)</h2>
-    <table>
-      <thead><tr><th>Artefato</th><th>Hash SHA-256</th><th>Selo Digital</th><th>Registrado em</th></tr></thead>
-      <tbody>${filesRows || '<tr><td colspan="4" class="muted">Sem artefatos.</td></tr>'}</tbody>
-    </table>
-
-    <h2>2 · Matriz de Conformidade — ${data.norma}</h2>
-    <table>
-      <thead><tr><th style="width:90px">Artigo</th><th>Requisito</th><th style="width:150px">Status</th></tr></thead>
-      <tbody>${compRows}</tbody>
-    </table>
-
-    <div class="foot">
-      <span>Documento gerado automaticamente pelo LicitaAudit · OmniLicit. Processamento local, sem tráfego externo de dados.</span>
-      <span class="mono">${data.geradoEm}</span>
-    </div>
-  </div>
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  downloadBlob(blob, `laudo-licitaudit-${stamp}.html`);
-  toast('Laudo de auditoria gerado. Abra e imprima como PDF.', 'ok');
 }
 
 /* -------------------------------------------------------------
-   13. HELPERS DE SEGURANÇA (XSS)
-   ------------------------------------------------------------- */
-function escapeHTML(s = '') {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-function escapeAttr(s = '') { return escapeHTML(s).replace(/`/g, '&#96;'); }
-
-/* -------------------------------------------------------------
-   14. BIND GLOBAL
-   ------------------------------------------------------------- */
-function bindGlobal() {
-  // Tema
-  $('#themeToggle').addEventListener('click', () => ThemeManager.toggle());
-
-  // Limpar
-  $('#btnClear').addEventListener('click', () => {
-    if (!STATE.files.length && !Object.keys(STATE.compliance).length) return;
-    if (!confirm('Confirma limpeza de todos os artefatos e da matriz de conformidade?')) return;
-    STATE.files = [];
-    STATE.compliance = {};
-    STATE.startedAt = new Date();
-    renderFiles();
-    renderSeals();
-    renderCompliance();
-    renderKPIs();
-    toast('Sessão de auditoria reiniciada.', 'ok');
-  });
-
-  // Export
-  $('#btnExportJSON').addEventListener('click', exportJSON);
-  $('#btnExportHTML').addEventListener('click', exportHTML);
-
-  // Copiar hash ao clicar
-  document.addEventListener('click', (e) => {
-    const h = e.target.closest('.hash');
-    if (!h) return;
-    const txt = h.dataset.copy || '';
-    if (!txt) return;
-    navigator.clipboard.writeText(txt).then(() => toast('Hash SHA-256 copiado.', 'ok'));
-  });
-
-  // Ano no footer
-  $('#year').textContent = new Date().getFullYear();
-}
-
-/* -------------------------------------------------------------
-   15. BOOTSTRAP
+   19. BOOTSTRAP
    ------------------------------------------------------------- */
 (function init() {
-  ThemeManager.init();
-  renderCompliance();
-  bindComplianceEvents();
-  renderFiles();
-  renderSeals();
-  renderKPIs();
-  bindDropzone();
+  Theme.init();
+  bindSidebar();
+  bindCompliance();
   bindGlobal();
+  refreshAll();
 
-  // Verificação de integridade do ambiente
+  // Footer
+  $('#year').textContent = new Date().getFullYear();
+  $('#footerSession').textContent = `Sessão iniciada em ${fmtDate(STATE.startedAt)}`;
+
+  // Aviso Web Crypto
   if (!window.crypto?.subtle) {
-    toast('Web Crypto indisponível — use HTTPS ou localhost.', 'danger', 8000);
+    toast('Web Crypto indisponível. Sirva o módulo via HTTPS ou localhost.', 'danger', 8000);
   }
 
   console.info(
-    '%c LicitaAudit · OmniLicit ',
+    '%c LicitaAudit · Workspace OmniLicit ',
     'background:#14B8A6;color:#062620;font-weight:700;padding:2px 6px;border-radius:4px',
-    '\nMódulo de auditoria iniciado ·',
-    `Sessão: ${STATE.startedAt.toISOString()}`
+    `\nSessão iniciada: ${STATE.startedAt.toISOString()}`,
+    `\nMódulos disponíveis: ${SLOTS.map(s => s.code).join(', ')}`
   );
 })();
