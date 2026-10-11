@@ -1054,7 +1054,72 @@ function renderAll() {
 }
 
 /* -------------------------------------------------------------
-   16. EVENTOS — SIDEBAR
+   16. MODAL — Controlador robusto de abertura/fechamento
+   -------------------------------------------------------------
+   Correção do bug de travamento: mesmo com `hidden = true` aplicado,
+   o CSS `.modal-backdrop { display: grid }` sobrepunha o `[hidden]`
+   do user-agent. Resolvido com `[hidden] { display: none !important }`
+   no CSS + reforço via `style.display` aqui.
+   ------------------------------------------------------------- */
+const WSModal = {
+  el: () => document.getElementById('wsModal'),
+  formEls: () => ({
+    name:    document.getElementById('wsName'),
+    process: document.getElementById('wsProcess'),
+    orgao:   document.getElementById('wsOrgao'),
+  }),
+
+  open() {
+    const modal = this.el();
+    if (!modal) return;
+
+    const { name, process, orgao } = this.formEls();
+    if (name)    name.value    = '';
+    if (process) process.value = '';
+    if (orgao)   orgao.value   = '';
+
+    modal.hidden = false;
+    modal.style.display = '';           // devolve o controle ao CSS (.modal-backdrop)
+    modal.classList.remove('closing');
+    modal.classList.add('open');
+
+    requestAnimationFrame(() => name?.focus());
+  },
+
+  close() {
+    const modal = this.el();
+    if (!modal || modal.hidden) return;
+
+    modal.classList.remove('open');
+    modal.classList.add('closing');
+
+    let done = false;
+    const finalize = () => {
+      if (done) return;
+      done = true;
+
+      // Esconde via atributo (CSS `[hidden]` já cuida) E via inline style (reforço)
+      modal.hidden = true;
+      modal.style.display = 'none';
+
+      modal.classList.remove('closing');
+
+      const { name, process, orgao } = this.formEls();
+      if (name)    name.value    = '';
+      if (process) process.value = '';
+      if (orgao)   orgao.value   = '';
+    };
+
+    modal.addEventListener('transitionend', finalize, { once: true });
+    setTimeout(finalize, 220); // fallback determinístico (reduced-motion, etc.)
+  },
+};
+
+function openWorkspaceModal()  { WSModal.open();  }
+function closeWorkspaceModal() { WSModal.close(); }
+
+/* -------------------------------------------------------------
+   17. EVENTOS — SIDEBAR
    ------------------------------------------------------------- */
 function bindWorkspaceList() {
   const list = $('#wsList');
@@ -1144,7 +1209,7 @@ function openFilePickerFor(slotId) {
 }
 
 /* -------------------------------------------------------------
-   17. EVENTOS — COMPLIANCE
+   18. EVENTOS — COMPLIANCE
    ------------------------------------------------------------- */
 function bindCompliance() {
   $('#complianceList').addEventListener('click', (e) => {
@@ -1167,43 +1232,90 @@ function bindCompliance() {
 }
 
 /* -------------------------------------------------------------
-   18. EVENTOS — GLOBAIS + MODAL
+   19. EVENTOS — GLOBAIS + MODAL
    ------------------------------------------------------------- */
-function openWorkspaceModal() {
-  $('#wsModal').hidden = false;
-  $('#wsName').value = '';
-  $('#wsProcess').value = '';
-  $('#wsOrgao').value = '';
-  setTimeout(() => $('#wsName').focus(), 50);
-}
-function closeWorkspaceModal() { $('#wsModal').hidden = true; }
-
 function bindGlobal() {
   $('#themeToggle').addEventListener('click', () => Theme.toggle());
 
+  // Abertura da modal
   $('#btnNewWorkspace').addEventListener('click', openWorkspaceModal);
   $('#btnNewWorkspaceEmpty').addEventListener('click', openWorkspaceModal);
+
+  // Fechamento da modal
   $('#wsModalClose').addEventListener('click', closeWorkspaceModal);
   $('#wsCancel').addEventListener('click', closeWorkspaceModal);
 
+  // Clique no backdrop fecha a modal
   $('#wsModal').addEventListener('click', (e) => {
     if (e.target.id === 'wsModal') closeWorkspaceModal();
   });
 
+  /* ---------- CRIAÇÃO DE WORKSPACE ----------
+     Fluxo corrigido:
+       1. Valida nome
+       2. createWorkspace() persiste + renderAll()
+       3. closeWorkspaceModal() esconde a modal (CSS [hidden] + inline style)
+       4. Foco no painel principal recém-criado
+       5. Feedback ao usuário
+     ------------------------------------------ */
   $('#wsCreate').addEventListener('click', () => {
-    const name = $('#wsName').value.trim();
-    if (!name) { toast('Informe o nome do processo.', 'warn'); $('#wsName').focus(); return; }
-    createWorkspace(name, $('#wsProcess').value.trim(), $('#wsOrgao').value.trim());
+    const nameEl    = $('#wsName');
+    const processEl = $('#wsProcess');
+    const orgaoEl   = $('#wsOrgao');
+
+    const name = (nameEl?.value || '').trim();
+    if (!name) {
+      toast('Informe o nome do processo.', 'warn');
+      nameEl?.focus();
+      return;
+    }
+
+    // 1) Persiste o workspace — internamente chama renderAll()
+    const ws = createWorkspace(
+      name,
+      (processEl?.value || '').trim(),
+      (orgaoEl?.value   || '').trim()
+    );
+
+    // 2) Fecha a modal (atributo hidden + inline style + animação)
     closeWorkspaceModal();
+
+    // 3) Transfere foco para o painel recém-criado
+    requestAnimationFrame(() => {
+      const panel = document.getElementById('workspacePanel');
+      if (panel && !panel.hidden) {
+        panel.setAttribute('tabindex', '-1');
+        panel.focus({ preventScroll: true });
+        panel.removeAttribute('tabindex');
+      }
+    });
+
+    // 4) Feedback final
+    if (ws) toast(`Workspace "${ws.name}" pronto para auditoria.`, 'ok');
   });
 
-  $('#wsName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#wsCreate').click(); });
+  // Enter no nome dispara criação (sem duplo disparo)
+  $('#wsName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      $('#wsCreate').click();
+    }
+  });
 
+  // ESC fecha a modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#wsModal').hidden) {
+      closeWorkspaceModal();
+    }
+  });
+
+  // Revalidar
   $('#btnReverify').addEventListener('click', () => {
     renderAll();
     toast('Verificação cruzada reexecutada.', 'ok');
   });
 
+  // Reset do workspace ativo
   $('#btnReset').addEventListener('click', () => {
     const ws = activeWs();
     if (!ws) return;
@@ -1218,27 +1330,26 @@ function bindGlobal() {
     toast('Workspace reiniciado.', 'ok');
   });
 
+  // Exportação
   $('#btnExportJSON').addEventListener('click', exportJSON);
   $('#btnExportPDF').addEventListener('click', exportPDF);
 
+  // Copiar hash do workspace
   $('#btnCopyWsHash').addEventListener('click', () => {
     const h = $('#workspaceHash').textContent;
     if (h && h !== '—') navigator.clipboard.writeText(h).then(() => toast('Hash do workspace copiado.', 'ok'));
   });
 
+  // Copiar hashes individuais
   document.addEventListener('click', (e) => {
     const h = e.target.closest('[data-copy]');
     if (!h || !h.dataset.copy) return;
     navigator.clipboard.writeText(h.dataset.copy).then(() => toast('Hash copiado.', 'ok'));
   });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#wsModal').hidden) closeWorkspaceModal();
-  });
 }
 
 /* -------------------------------------------------------------
-   19. EXPORTAÇÃO — TRILHA JSON
+   20. EXPORTAÇÃO — TRILHA JSON
    ------------------------------------------------------------- */
 function buildPayload() {
   const ws = activeWs();
@@ -1315,7 +1426,7 @@ function exportJSON() {
 }
 
 /* -------------------------------------------------------------
-   20. EXPORTAÇÃO — LAUDO EM PDF (padrão executivo OmniLicit)
+   21. EXPORTAÇÃO — LAUDO EM PDF (padrão executivo OmniLicit)
    ------------------------------------------------------------- */
 let __logoDataURL = null;
 
@@ -1910,7 +2021,6 @@ async function exportPDF() {
   data.workspaceNome  = ws.name;
   data.workspaceOrgao = ws.orgao || '—';
 
-  // Enriquecer artefatos com status de selo (para a seção 1)
   const slotByCode = Object.fromEntries(
     Object.entries(ws.slots).map(([sid, s]) => [SLOTS.find(x => x.id === sid)?.code, s])
   );
@@ -1965,7 +2075,7 @@ async function exportPDF() {
 }
 
 /* -------------------------------------------------------------
-   21. BOOTSTRAP
+   22. BOOTSTRAP
    ------------------------------------------------------------- */
 (function init() {
   Theme.init();
