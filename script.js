@@ -1,6 +1,7 @@
 /* =============================================================
    LicitaAudit · Multi-Workspace — OmniLicit
-   Motor de auditoria cruzada + parser robusto de selos digitais
+   Motor de auditoria cruzada + extração de texto via PDF.js
+   + parser robusto de selos digitais (TAG + HASH DOC + HASH CAL)
    + laudo PDF em padrão executivo (3 blocos de paginação)
    Lei nº 14.133/2021
    ============================================================= */
@@ -91,6 +92,7 @@ function persistState() {
               sealStatus: s.sealStatus || null,
               fields: s.fields || {},
               loadedAt: s.loadedAt,
+              textSource: s.textSource || null,
               stale: true,
             }])
           ),
@@ -164,64 +166,210 @@ const Theme = {
 };
 
 /* -------------------------------------------------------------
-   5. HASH + EXTRAÇÃO DE TEXTO
+   5. HASH SHA-256 (Web Crypto) + HELPERS
    ------------------------------------------------------------- */
-async function sha256(buffer) {
+/**
+ * Calcula o HASH CAL (hash local) do arquivo enviado.
+ * Usa crypto.subtle.digest('SHA-256', ArrayBuffer) e devolve hex minúsculo.
+ * Aceita ArrayBuffer | Uint8Array | Blob.
+ */
+async function sha256(input) {
+  if (!window.crypto?.subtle) {
+    throw new Error('Web Crypto API indisponível (sirva via HTTPS/localhost).');
+  }
+  let buffer;
+  if (input instanceof ArrayBuffer) {
+    buffer = input;
+  } else if (input instanceof Uint8Array) {
+    buffer = input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength);
+  } else if (input instanceof Blob) {
+    buffer = await input.arrayBuffer();
+  } else {
+    throw new TypeError('sha256(): entrada deve ser ArrayBuffer, Uint8Array ou Blob.');
+  }
   const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 const detectExt = (name) => (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
 
+const isPDFBuffer = (buffer) => {
+  const bytes = new Uint8Array(buffer.slice(0, 5));
+  return bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2D;
+};
+
+/* -------------------------------------------------------------
+   6. EXTRAÇÃO DE TEXTO
+   -------------------------------------------------------------
+   Estratégia em cascata:
+     1. Formatos texto → decode UTF-8 direto
+     2. PDF → PDF.js (reconstrói content streams comprimidas)
+     3. Fallback → latin1 + tentativa de descompressão FlateDecode manual
+   ------------------------------------------------------------- */
 async function decompressPdfStreams(latin1Text) {
   if (typeof DecompressionStream === 'undefined') return [];
   const out = [];
   const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
   let m, count = 0;
-  while ((m = re.exec(latin1Text)) !== null && count < 40) {
+  while ((m = re.exec(latin1Text)) !== null && count < 60) {
     count++;
     const raw = m[1];
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
-    try {
-      const ds = new DecompressionStream('deflate');
-      const writer = ds.writable.getWriter();
-      writer.write(bytes); writer.close();
-      const reader = ds.readable.getReader();
-      const chunks = [];
-      while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
-      const len = chunks.reduce((a, c) => a + c.length, 0);
-      const buf = new Uint8Array(len);
-      let off = 0; for (const c of chunks) { buf.set(c, off); off += c.length; }
-      out.push(new TextDecoder('latin1').decode(buf));
-    } catch { /* stream não-Flate, ignora */ }
+    for (const algo of ['deflate', 'deflate-raw']) {
+      try {
+        const ds = new DecompressionStream(algo);
+        const writer = ds.writable.getWriter();
+        writer.write(bytes); writer.close();
+        const reader = ds.readable.getReader();
+        const chunks = [];
+        while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
+        const len = chunks.reduce((a, c) => a + c.length, 0);
+        const buf = new Uint8Array(len);
+        let off = 0; for (const c of chunks) { buf.set(c, off); off += c.length; }
+        out.push(new TextDecoder('latin1').decode(buf));
+        break;
+      } catch { /* tenta próximo algoritmo */ }
+    }
   }
   return out;
 }
 
+/**
+ * Extração de texto real de PDFs via PDF.js.
+ * Devolve o conteúdo com quebras de linha preservando blocos verticais.
+ */
+async function extractTextFromPDF(buffer) {
+  const lib = window.pdfjsLib || window.pdfjs;
+  if (!lib) throw new Error('PDF.js não disponível.');
+
+  // Configura worker (uma vez)
+  if (lib.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
+    lib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  // PDF.js consome/detaches o buffer → clonar
+  const data = buffer.slice(0);
+  const pdf = await lib.getDocument({
+    data,
+    disableAutoFetch: true,
+    disableStream: true,
+    isEvalSupported: false,
+  }).promise;
+
+  const maxPages = Math.min(pdf.numPages, 250);
+  const pages = [];
+
+  for (let i = 1; i <= maxPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+
+    let pageText = '';
+    let lastY = null;
+    let lastX = null;
+    let lastWidth = 0;
+
+    for (const item of content.items) {
+      const x = item.transform?.[4];
+      const y = item.transform?.[5];
+      const w = item.width || 0;
+
+      // Quebra de linha quando muda significativamente de Y (nova linha visual)
+      if (lastY !== null && y !== null && Math.abs(y - lastY) > 4) {
+        pageText += '\n';
+      } else if (lastX !== null && x !== null) {
+        // Espaço quando há um gap horizontal natural
+        const gap = x - (lastX + lastWidth);
+        if (gap > 1.5 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
+          pageText += ' ';
+        }
+      }
+
+      pageText += item.str || '';
+
+      if (item.hasEOL && !pageText.endsWith('\n')) pageText += '\n';
+
+      lastY = y;
+      lastX = x;
+      lastWidth = w;
+    }
+
+    pages.push(pageText);
+  }
+
+  await pdf.destroy?.();
+  return pages.join('\n\n');
+}
+
+/**
+ * Extrai texto de qualquer artefato. Devolve { text, source }.
+ * source ∈ 'utf-8' | 'pdfjs' | 'latin1' | 'latin1+inflate' | 'mixed'
+ */
 async function extractText(file, buffer) {
   const ext = detectExt(file.name);
+
+  // 1. Formatos texto
   if (['txt','csv','json','xml','md','html','htm','xsd','nfe','cte'].includes(ext)) {
-    return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+    return { text: new TextDecoder('utf-8', { fatal: false }).decode(buffer), source: 'utf-8' };
   }
+
+  // 2. PDF → PDF.js (caminho preferencial)
+  const looksLikePDF = ext === 'pdf' || isPDFBuffer(buffer);
+  if (looksLikePDF) {
+    try {
+      const pdfText = await extractTextFromPDF(buffer);
+      if (pdfText && pdfText.replace(/\s+/g, '').length > 20) {
+        return { text: pdfText, source: 'pdfjs' };
+      }
+    } catch (err) {
+      console.warn('[LicitaAudit] PDF.js falhou, usando fallback latin1:', err);
+    }
+  }
+
+  // 3. Fallback latin1 (+ inflate manual)
   const latin1 = new TextDecoder('latin1', { fatal: false }).decode(buffer);
   const parts = [latin1];
-  if (ext === 'pdf' || latin1.slice(0, 5).includes('%PDF')) {
+  let source = 'latin1';
+
+  if (looksLikePDF) {
     try {
       const streams = await decompressPdfStreams(latin1);
-      parts.push(...streams);
+      if (streams.length) {
+        parts.push(...streams);
+        source = 'latin1+inflate';
+      }
     } catch { /* silencioso */ }
   }
-  return parts.join('\n');
+
+  return { text: parts.join('\n'), source };
 }
 
 /* -------------------------------------------------------------
-   6. PARSER DE SELO DIGITAL — TAG + HASH (ROBUSTO)
-   ------------------------------------------------------------- */
-const MODULE_TOKEN = '(?:[A-Z][A-Z0-9_]{1,15})';
-const UNIQUE_TOKEN = '(?:[A-Z0-9][A-Z0-9_\\-]{3,64})';
+   7. PARSER DE SELO DIGITAL — TAG + HASH DOC (ROBUSTO)
+   -------------------------------------------------------------
+   Reconhece (em qualquer combinação de separadores : . - _ / espaço):
+     OMNILICIT::ETP::ABC123::2026
+     OMNILICIT:ETP:ABC123:2026
+     OMNILICIT ETP ABC123 2026
+     OMNILICIT-ETP-ABC123-2026
+     TAG OMNILICIT ETP ABC123 2026
+     TAG OMNILICIT::ETP::ABC123
+     TAG OMNILICIT ETP ABC123
 
-function extractOmniSeal(text) {
+   HASH DOC (declarado):
+     HASH DOC: <64 hex>
+     HASH DOCUMENTO: <64 hex>
+     HASH SHA-256: <64 hex>
+     SHA-256: <64 hex>
+     INTEGRIDADE: <64 hex>
+     <64 hex isolado>
+   ------------------------------------------------------------- */
+const OMNI_STOPWORDS = /^(WORKSPACE|SYSTEM|MODULE|SISTEMA|PLATAFORMA|MODULO|DOC|DOCUMENTO|HASH|TAG|SHA|SEAL|SELO|LICITAUDIT|OMNILICIT)$/i;
+
+function extractOmniSeal(rawText) {
   const out = {
     tags: [],
     declaredHashes: [],
@@ -230,72 +378,69 @@ function extractOmniSeal(text) {
     declaredAt: null,
   };
 
-  // Formato 1: OMNILICIT::MODULO::TAG[::ANO]
-  const re1 = new RegExp(
-    `OMNILICIT\\s*::\\s*(${MODULE_TOKEN})\\s*::\\s*(${UNIQUE_TOKEN})(?:\\s*::\\s*(\\d{2,4}))?`,
-    'gi'
-  );
+  if (!rawText || typeof rawText !== 'string') return out;
+
+  // Três visões do texto para cobrir todas as formas de espaçamento
+  const raw = rawText;
+  const compact = rawText.replace(/\s+/g, ' ').trim();
+  const ultraCompact = rawText.replace(/\s+/g, '');
+
+  /* ===== TAGs ===== */
+  const tagPatterns = [
+    // OMNILICIT::MODULO::TAG[::ANO] — colons separando
+    /OMNILICIT\s*[:]{1,2}\s*([A-Z][A-Z0-9_]{1,15})\s*[:]{1,2}\s*([A-Z0-9][A-Z0-9_\-]{3,64})(?:\s*[:]{1,2}\s*(\d{2,4}))?/gi,
+    // TAG OMNILICIT MODULO TAG [ANO] — prefixo "TAG"
+    /TAG\s+OMNILICIT[\s:._\-\/]+([A-Z][A-Z0-9_]{1,15})[\s:._\-\/]+([A-Z0-9][A-Z0-9_\-]{3,64})(?:[\s:._\-\/]+(\d{2,4}))?/gi,
+    // OMNILICIT MODULO TAG [ANO] — separadores mistos
+    /OMNILICIT[\s:._\-\/]+([A-Z][A-Z0-9_]{1,15})[\s:._\-\/]+([A-Z0-9][A-Z0-9_\-]{3,64})(?:[\s:._\-\/]+(\d{2,4}))?/gi,
+  ];
+
+  for (const re of tagPatterns) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(compact)) !== null && out.tags.length < 40) {
+      if (OMNI_STOPWORDS.test(m[1])) continue;
+      pushTag(out.tags, m[1], m[2], m[3], m[0]);
+    }
+  }
+
+  // Ultra compacto (sem espaços) — fallback para PDFs que concatenam tudo
+  if (!out.tags.length) {
+    const re = /OMNILICIT:?:?([A-Z][A-Z0-9_]{1,15}):?:?([A-Z0-9][A-Z0-9_\-]{3,64}):?:?(\d{2,4})?/gi;
+    let m;
+    while ((m = re.exec(ultraCompact)) !== null && out.tags.length < 40) {
+      if (OMNI_STOPWORDS.test(m[1])) continue;
+      pushTag(out.tags, m[1], m[2], m[3], m[0]);
+    }
+  }
+
+  /* ===== HASH DOC (declarado) ===== */
+  // Camada 1: prefixado (HASH DOC, SHA-256, INTEGRIDADE...)
+  const hashPrefixed = /(?:HASH\s*(?:DOC(?:UMENTO)?|SHA[\s\-_]?256|DE\s*INTEGRIDADE)?|SHA[\s\-_]?256|INTEGRIDADE(?:\s*DO\s*DOCUMENTO)?|DIGEST|CHECKSUM|CHAVE)\s*[:=\-]?\s*([A-Fa-f0-9]{64})/gi;
   let m;
-  while ((m = re1.exec(text)) !== null && out.tags.length < 20) {
-    pushTag(out.tags, m[1], m[2], m[3], m[0]);
-  }
-
-  // Formato 2: OMNILICIT-MODULO-TAG-ANO (separadores mistos)
-  if (!out.tags.length) {
-    const re2 = new RegExp(
-      `OMNILICIT[\\s:._\\-]+(${MODULE_TOKEN})[\\s:._\\-]+(${UNIQUE_TOKEN})(?:[\\s:._\\-]+(\\d{4}))?`,
-      'gi'
-    );
-    while ((m = re2.exec(text)) !== null && out.tags.length < 20) {
-      if (/^(WORKSPACE|SYSTEM|MODULE|SISTEMA|PLATAFORMA)$/i.test(m[1])) continue;
-      pushTag(out.tags, m[1], m[2], m[3], m[0]);
-    }
-  }
-
-  // Formato 3: TAG OMNILICIT [sep] MODULO [sep] TAG [sep] ANO
-  const re3 = new RegExp(
-    `TAG\\s+OMNILICIT[\\s:._\\-]*(${MODULE_TOKEN})?[\\s:._\\-]*(${UNIQUE_TOKEN})?(?:[\\s:._\\-]+(\\d{4}))?`,
-    'gi'
-  );
-  while ((m = re3.exec(text)) !== null && out.tags.length < 40) {
-    if (!m[1] || !m[2]) continue;
-    pushTag(out.tags, m[1], m[2], m[3], m[0]);
-  }
-
-  // Formato 4: fallback permissivo
-  if (!out.tags.length) {
-    const re4 = /OMNILICIT[\s\S]{0,120}?([A-Z]{2,10})[\s:._\-]+([A-Z0-9][A-Z0-9_\-]{3,48})(?:[\s:._\-]+(\d{4}))?/gi;
-    while ((m = re4.exec(text)) !== null && out.tags.length < 20) {
-      if (/^(WORKSPACE|SYSTEM|MODULE|SISTEMA|PLATAFORMA)$/i.test(m[1])) continue;
-      pushTag(out.tags, m[1], m[2], m[3], m[0]);
-    }
-  }
-
-  // SHA-256 declarado (com prefixo)
-  const hashRe1 = /(?:SHA[\s_\-]?256|HASH(?:\s+SHA[\s_\-]?256)?|INTEGRIDADE|DIGEST|CHAVE)\s*[:=\-]?\s*([A-F0-9]{64})/gi;
-  while ((m = hashRe1.exec(text)) !== null && out.declaredHashes.length < 20) {
+  while ((m = hashPrefixed.exec(compact)) !== null && out.declaredHashes.length < 20) {
     out.declaredHashes.push({ value: m[1].toUpperCase(), raw: m[0].trim() });
   }
 
-  // SHA-256 próximo de palavras-chave
+  // Camada 2: 64 hex próximo a palavras-chave (janela de 120 chars)
   if (!out.declaredHashes.length) {
-    const hashRe2 = /(?:selo|assinatura|verifica|autentica|integridade|confer[êe]ncia)[^\n]{0,120}?([A-F0-9]{64})/gi;
-    while ((m = hashRe2.exec(text)) !== null && out.declaredHashes.length < 10) {
+    const near = /(?:selo|assinatura|verifica|autentica|integridade|confer[êe]ncia|rodap[ée]|hash)[^\n]{0,120}?\b([A-Fa-f0-9]{64})\b/gi;
+    while ((m = near.exec(raw)) !== null && out.declaredHashes.length < 10) {
       out.declaredHashes.push({ value: m[1].toUpperCase(), raw: m[0].trim() });
     }
   }
 
-  // SHA-256 isolado em linha
+  // Camada 3: primeiro 64-hex isolado (fallback universal)
   if (!out.declaredHashes.length) {
-    const hashRe3 = /(?:^|[\s\r\n>|<])([A-F0-9]{64})(?:$|[\s\r\n<|>])/gm;
-    while ((m = hashRe3.exec(text)) !== null && out.declaredHashes.length < 10) {
+    const any = /\b([A-Fa-f0-9]{64})\b/g;
+    while ((m = any.exec(raw)) !== null && out.declaredHashes.length < 10) {
       out.declaredHashes.push({ value: m[1].toUpperCase(), raw: m[1] });
     }
   }
 
-  // Data do selo
-  const dateRe = /(?:emitido|assinado|gerado|selado)\s*(?:em)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i;
-  const dm = text.match(dateRe);
+  /* ===== Data do selo ===== */
+  const dateRe = /(?:emitido|assinado|gerado|selado|carimbado)\s*(?:em)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i;
+  const dm = raw.match(dateRe);
   if (dm) out.declaredAt = dm[1];
 
   out.primaryTag  = out.tags[0] || null;
@@ -308,6 +453,7 @@ function pushTag(arr, mod, uniq, year, raw) {
   const M = String(mod).toUpperCase();
   const U = String(uniq).toUpperCase();
   const Y = year ? String(year).padStart(4, '0').slice(-4) : null;
+  if (!M || !U) return;
   if (arr.some(t => t.module === M && t.unique === U && t.year === Y)) return;
   arr.push({
     module: M, unique: U, year: Y, raw: String(raw).trim(),
@@ -324,14 +470,14 @@ function validateTagModule(slotId, tagModule) {
 }
 
 /* -------------------------------------------------------------
-   7. SELO PAdES / PKCS#7 / XMLDSig
+   8. SELO PAdES / PKCS#7 / XMLDSig (assinatura estrutural)
    ------------------------------------------------------------- */
 function inspectSignature(file, buffer) {
   const ext = detectExt(file.name);
   const bytes = new Uint8Array(buffer.slice(0, Math.min(buffer.byteLength, 4 * 1024 * 1024)));
   const res = { signed: false, standard: null, level: 'none', details: [] };
 
-  const isPDF = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+  const isPDF = isPDFBuffer(buffer);
   if (isPDF || ext === 'pdf') {
     const text = new TextDecoder('latin1').decode(bytes);
     if (/\/ByteRange\s*\[/.test(text) || /\/Type\s*\/Sig\b/.test(text)) {
@@ -359,22 +505,37 @@ function inspectSignature(file, buffer) {
 }
 
 /* -------------------------------------------------------------
-   8. PROCESSAMENTO DO ARQUIVO
+   9. PROCESSAMENTO DO ARQUIVO
+   -------------------------------------------------------------
+   Etapas:
+     1. Lê o arquivo como ArrayBuffer
+     2. Calcula HASH CAL (SHA-256 local do arquivo enviado)
+     3. Extrai texto (PDF.js / latin1)
+     4. Lê TAG + HASH DOC declarados
+     5. Compara HASH CAL vs HASH DOC → hashMatch
+     6. Determina selo estrutural (PAdES/PKCS#7/XMLDSig)
    ------------------------------------------------------------- */
 async function processFile(file) {
   const buffer = await file.arrayBuffer();
+
+  // HASH CAL — hash local do arquivo recebido
   const computedHash = await sha256(buffer);
+
   const ext = detectExt(file.name);
-  const text = await extractText(file, buffer);
+  const { text, source: textSource } = await extractText(file, buffer);
   const signature = inspectSignature(file, buffer);
   const seal = extractOmniSeal(text);
 
+  const declaredHash = seal.primaryHash || null;
+  const hashMatch = declaredHash ? (declaredHash.toUpperCase() === computedHash.toUpperCase()) : null;
+
   return {
     file: { name: file.name, size: file.size, ext, mime: file.type || '' },
-    hash: computedHash,
+    hash: computedHash,              // HASH CAL
+    declaredHash,                    // HASH DOC
+    hashMatch,                       // true | false | null
     textLength: text.length,
-    declaredHash: seal.primaryHash,
-    hashMatch: seal.primaryHash ? (seal.primaryHash === computedHash) : null,
+    textSource,
     tag: seal.primaryTag?.full || null,
     tagModule: seal.primaryTag?.module || null,
     tagUnique: seal.primaryTag?.unique || null,
@@ -387,35 +548,47 @@ async function processFile(file) {
   };
 }
 
+/**
+ * Determina o status visual do selo a partir dos hashes e assinatura.
+ * Regra de ouro:
+ *   - HASH DOC presente e DIFERENTE do HASH CAL → tampered (crítico)
+ *   - HASH DOC presente e IGUAL + TAG presente → verified
+ *   - Apenas TAG ou apenas HASH → partial
+ *   - Nada → unsigned
+ */
 function computeSealStatus(slot) {
   const hasTag = !!slot.tag;
-  const hasDeclared = !!slot.declaredHash;
+  const hasDeclaredHash = !!slot.declaredHash;
+  const hasComputedHash = !!slot.hash;
   const match = slot.hashMatch;
   const hasSig = slot.signature?.signed;
 
-  if (hasDeclared && match === false) {
-    return { status: 'tampered', label: 'Divergente — possível adulteração', cls: 'tampered' };
+  if (hasDeclaredHash && match === false) {
+    return { status: 'tampered', label: 'DIVERGENTE — hash não confere', cls: 'tampered' };
   }
-  if (hasTag && hasDeclared && match === true) {
+  if (hasTag && hasDeclaredHash && match === true) {
     return { status: 'verified', label: 'Verificado e Íntegro', cls: 'verified' };
   }
-  if (hasTag && hasSig && !hasDeclared) {
-    return { status: 'sealed', label: 'Selo digital (hash não declarado)', cls: 'verified' };
+  if (hasTag && hasSig && !hasDeclaredHash) {
+    return { status: 'sealed', label: 'Selo digital (HASH DOC ausente)', cls: 'verified' };
   }
-  if (hasDeclared && match === true && !hasTag) {
-    return { status: 'hash-only', label: 'Hash confere (TAG ausente)', cls: 'partial' };
+  if (hasDeclaredHash && match === true && !hasTag) {
+    return { status: 'hash-only', label: 'HASH DOC confere (TAG ausente)', cls: 'partial' };
   }
-  if (hasSig && !hasTag && !hasDeclared) {
-    return { status: 'signed-only', label: 'Assinado (TAG/hash ausentes)', cls: 'partial' };
+  if (hasSig && !hasTag && !hasDeclaredHash) {
+    return { status: 'signed-only', label: 'Assinado (TAG/HASH ausentes)', cls: 'partial' };
   }
-  if (hasTag && !hasDeclared && !hasSig) {
-    return { status: 'tag-only', label: 'TAG detectada (hash ausente)', cls: 'partial' };
+  if (hasTag && !hasDeclaredHash && !hasSig) {
+    return { status: 'tag-only', label: 'TAG detectada (HASH DOC ausente)', cls: 'partial' };
+  }
+  if (hasComputedHash && !hasDeclaredHash && !hasTag) {
+    return { status: 'cal-only', label: 'HASH CAL calculado (sem selo)', cls: 'partial' };
   }
   return { status: 'unsigned', label: 'Sem selo digital', cls: 'unsigned' };
 }
 
 /* -------------------------------------------------------------
-   9. EXTRAÇÃO DE CAMPOS
+   10. EXTRAÇÃO DE CAMPOS
    ------------------------------------------------------------- */
 function toNumberBR(s) {
   if (s == null) return null;
@@ -472,7 +645,7 @@ function cleanFields(f) {
 }
 
 /* -------------------------------------------------------------
-   10. ROTEAMENTO AUTOMÁTICO
+   11. ROTEAMENTO AUTOMÁTICO
    ------------------------------------------------------------- */
 function detectSlotFor(filename, text, fields, omniSeal) {
   if (omniSeal?.primaryTag?.module) {
@@ -498,7 +671,7 @@ function detectSlotFor(filename, text, fields, omniSeal) {
 }
 
 /* -------------------------------------------------------------
-   11. CRUD DE WORKSPACES
+   12. CRUD DE WORKSPACES
    ------------------------------------------------------------- */
 function createWorkspace(name, processo, orgao) {
   const ws = emptyWorkspace(name, processo, orgao);
@@ -534,7 +707,7 @@ function deleteWorkspace(id) {
 }
 
 /* -------------------------------------------------------------
-   12. INGESTÃO DE ARQUIVOS
+   13. INGESTÃO DE ARQUIVOS
    ------------------------------------------------------------- */
 async function loadFileIntoSlot(slotId, file) {
   const ws = activeWs();
@@ -552,18 +725,31 @@ async function loadFileIntoSlot(slotId, file) {
 
     const status = payload.sealStatus;
     const slotCode = SLOTS.find(s => s.id === slotId)?.code || slotId;
+
     if (status.status === 'verified' || status.status === 'sealed') {
       toast(`${slotCode}: verificado e íntegro.`, 'ok');
     } else if (status.status === 'tampered') {
-      toast(`⚠️ ${file.name}: hash divergente — possível adulteração!`, 'danger', 6000);
+      toast(`⚠️ ${file.name}: HASH DOC divergente — possível adulteração!`, 'danger', 6000);
     } else if (payload.tagModuleMatch === false) {
       toast(`TAG "${payload.tagModule}" não corresponde ao módulo ${slotId.toUpperCase()}.`, 'warn', 5000);
+    } else if (status.status === 'unsigned') {
+      toast(`${slotCode}: ${file.name} carregado (sem selo digital detectado).`, 'warn', 4500);
     } else {
-      toast(`${slotCode}: ${file.name} carregado.`, 'ok');
+      toast(`${slotCode}: ${file.name} carregado (${status.label}).`, 'ok');
     }
+
+    console.debug('[LicitaAudit] slot', slotId, {
+      textSource: payload.textSource,
+      textLength: payload.textLength,
+      tag: payload.tag,
+      declaredHash: payload.declaredHash,
+      computedHash: payload.hash,
+      hashMatch: payload.hashMatch,
+      status: status.status,
+    });
   } catch (err) {
     console.error('[LicitaAudit] erro', err);
-    toast(`Falha ao processar ${file.name}`, 'danger');
+    toast(`Falha ao processar ${file.name}: ${err.message}`, 'danger');
   }
 }
 
@@ -576,10 +762,9 @@ async function loadBulk(files) {
   const matched = [], unmatched = [];
   for (const file of list) {
     const buffer = await file.arrayBuffer();
-    const ext = detectExt(file.name);
-    const text = await extractText(file, buffer);
+    const { text } = await extractText(file, buffer);
     const omniSeal = extractOmniSeal(text);
-    const fields = extractFields(text, ext);
+    const fields = extractFields(text, detectExt(file.name));
     const target = detectSlotFor(file.name, text, fields, omniSeal);
     if (target) matched.push({ file, slotId: target });
     else unmatched.push(file);
@@ -595,7 +780,7 @@ async function loadBulk(files) {
 }
 
 /* -------------------------------------------------------------
-   13. CROSS-CHECKS
+   14. CROSS-CHECKS
    ------------------------------------------------------------- */
 function getLoaded() {
   const ws = activeWs();
@@ -623,12 +808,11 @@ function runCrossChecks() {
   const add = (severity, category, title, description, modules, legalRef, field) =>
     div.push({ id: Math.random().toString(36).slice(2, 10), severity, category, title, description, modules, legalRef, field });
 
-  // Selos divergentes
   loaded.forEach(x => {
     if (x.sealStatus?.status === 'tampered') {
       add('critical', 'Integridade',
-        `Hash SHA-256 divergente em ${x.code}`,
-        `O hash computado do arquivo não corresponde ao hash declarado no documento. Possível adulteração ou reemissão. Computado: ${x.hash.slice(0, 16)}… / Declarado: ${(x.declaredHash || '').slice(0, 16)}…`,
+        `HASH DOC divergente em ${x.code}`,
+        `O hash computado localmente (HASH CAL) não corresponde ao hash declarado no documento (HASH DOC). Possível adulteração ou reemissão. HASH CAL: ${x.hash.slice(0, 16)}… / HASH DOC: ${(x.declaredHash || '').slice(0, 16)}…`,
         [x.code], 'Art. 5º', 'hash');
     } else if (x.tagModuleMatch === false) {
       add('critical', 'Identificação',
@@ -638,19 +822,18 @@ function runCrossChecks() {
     } else if (x.sealStatus?.status === 'unsigned') {
       add('info', 'Assinatura',
         `Documento sem selo digital: ${x.code}`,
-        `${x.file.name} não possui TAG OmniLicit nem hash SHA-256 declarado.`,
+        `${x.file.name} não possui TAG OmniLicit nem HASH DOC declarado.`,
         [x.code], 'Art. 5º', 'seal');
-    } else if (x.sealStatus?.status === 'hash-only' || x.sealStatus?.status === 'tag-only') {
+    } else if (['hash-only','tag-only','cal-only','signed-only'].includes(x.sealStatus?.status)) {
       add('warning', 'Assinatura',
         `Selo digital parcial em ${x.code}`,
-        `${x.sealStatus.label}. TAG: ${x.tag || 'ausente'} · Hash declarado: ${x.declaredHash ? 'presente' : 'ausente'}.`,
+        `${x.sealStatus.label}. TAG: ${x.tag || 'ausente'} · HASH DOC: ${x.declaredHash ? 'presente' : 'ausente'}.`,
         [x.code], 'Art. 5º', 'seal');
     }
   });
 
   const byField = (key) => loaded.filter(x => x.fields?.[key] != null && x.fields[key] !== '').map(x => ({ id: x.id, code: x.code, value: x.fields[key] }));
 
-  // Processo
   const procs = byField('processo');
   if (procs.length > 1) {
     const ref = procs[0];
@@ -660,7 +843,6 @@ function runCrossChecks() {
     }
   }
 
-  // Órgão
   const orgaos = byField('orgao');
   if (orgaos.length > 1) {
     const ref = orgaos[0];
@@ -670,7 +852,6 @@ function runCrossChecks() {
     }
   }
 
-  // UASG
   const uasgs = byField('uasg');
   if (uasgs.length > 1) {
     const ref = uasgs[0];
@@ -680,7 +861,6 @@ function runCrossChecks() {
     }
   }
 
-  // Quantidade
   const qtds = byField('quantidade').map(x => ({ ...x, value: Number(x.value) })).filter(x => Number.isFinite(x.value));
   if (qtds.length > 1) {
     const ref = qtds[0];
@@ -696,7 +876,6 @@ function runCrossChecks() {
     }
   }
 
-  // Valor estimado
   const valores = byField('valorEstimado').map(x => ({ ...x, value: Number(x.value) })).filter(x => Number.isFinite(x.value) && x.value > 0);
   if (valores.length > 1) {
     const ref = valores[0];
@@ -712,7 +891,6 @@ function runCrossChecks() {
     }
   }
 
-  // Objeto
   const objetos = byField('objeto');
   if (objetos.length > 1) {
     const ref = objetos[0];
@@ -724,7 +902,6 @@ function runCrossChecks() {
     }
   }
 
-  // Hashes duplicados
   const hmap = new Map();
   loaded.forEach(x => { if (!hmap.has(x.hash)) hmap.set(x.hash, []); hmap.get(x.hash).push(x.code); });
   hmap.forEach((codes, h) => {
@@ -733,13 +910,11 @@ function runCrossChecks() {
       codes, 'Art. 12', 'hash');
   });
 
-  // Completude
   SLOTS.filter(s => s.required).forEach(s => {
     if (!ws.slots[s.id]?.file) add('critical', 'Completude', `Módulo obrigatório ausente: ${s.code}`,
       `${s.label} não foi importado no workspace.`, [s.code], s.articles[0], 'required');
   });
 
-  // Campos ausentes
   loaded.forEach(x => {
     ['processo','objeto','valorEstimado'].forEach(f => {
       if (!x.fields?.[f]) add('warning', 'Extração', `Campo "${f}" não localizado em ${x.code}`,
@@ -752,7 +927,7 @@ function runCrossChecks() {
 }
 
 /* -------------------------------------------------------------
-   14. CONFORMIDADE
+   15. CONFORMIDADE
    ------------------------------------------------------------- */
 function calcCompliance() {
   const ws = activeWs();
@@ -788,7 +963,7 @@ const getEffectiveCompliance = (id) => {
 };
 
 /* -------------------------------------------------------------
-   15. RENDERS
+   16. RENDERS
    ------------------------------------------------------------- */
 function renderWorkspaceList() {
   const list = $('#wsList');
@@ -853,7 +1028,7 @@ function renderSlotList() {
     }
 
     const meta = hasFile
-      ? `<span>${fmtBytes(st.file.size)}</span><span>·</span><span>${st.file.ext.toUpperCase()}</span>${st.tag ? `<span>·</span><span style="color:var(--accent)">${escapeHTML(st.tagUnique || '')}</span>` : ''}`
+      ? `<span>${fmtBytes(st.file.size)}</span><span>·</span><span>${st.file.ext.toUpperCase()}</span>${st.tagUnique ? `<span>·</span><span style="color:var(--accent)">${escapeHTML(st.tagUnique)}</span>` : ''}`
       : `<span class="muted">${slot.required ? 'obrigatório' : 'opcional'}</span>`;
 
     return `
@@ -927,6 +1102,9 @@ function renderIntegrity() {
     const declaredFull = x.declaredHash || '';
     const matchClass = x.hashMatch === false ? 'hash-mismatch' : 'hash-value';
     const tagDisplay = x.tag ? escapeHTML(x.tag) : '<span style="color:var(--text-3)">— não detectada —</span>';
+    const hashDocDisplay = declaredFull
+      ? `<dd class="${matchClass}" data-copy="${declaredFull}" title="Clique para copiar">${escapeHTML(declaredFull)}</dd>`
+      : '<dd style="color:var(--text-3)">— não declarado —</dd>';
 
     return `
       <div class="int-card" data-seal="${sealStatus.cls}">
@@ -940,12 +1118,12 @@ function renderIntegrity() {
         <div class="int-file" title="${escapeAttr(x.file.name)}">${escapeHTML(x.file.name)}</div>
         <dl class="int-kv">
           <dt>TAG</dt><dd class="tag-value">${tagDisplay}</dd>
-          <dt>Hash calc.</dt><dd class="${matchClass}" data-copy="${computedFull}" title="Clique para copiar">${escapeHTML(computedFull || '—')}</dd>
-          <dt>Hash doc.</dt><dd class="${matchClass}" data-copy="${declaredFull}" title="Clique para copiar">${escapeHTML(declaredFull || '—')}</dd>
+          <dt>HASH CAL</dt><dd class="hash-value" data-copy="${computedFull}" title="Hash local do arquivo — clique para copiar">${escapeHTML(computedFull || '—')}</dd>
+          <dt>HASH DOC</dt>${hashDocDisplay}
           <dt>Selo</dt><dd>${x.signature?.signed ? escapeHTML(x.signature.standard || 'Assinado') : '—'}</dd>
         </dl>
         <div class="int-foot">
-          <span>${fmtBytes(x.file.size)} · ${x.file.ext.toUpperCase()}</span>
+          <span>${fmtBytes(x.file.size)} · ${x.file.ext.toUpperCase()}${x.textSource ? ' · ' + x.textSource : ''}</span>
           <span>${x.stale ? '⚠ re-upload p/ re-verificar' : 'verificado nesta sessão'}</span>
         </div>
       </div>
@@ -1054,12 +1232,7 @@ function renderAll() {
 }
 
 /* -------------------------------------------------------------
-   16. MODAL — Controlador robusto de abertura/fechamento
-   -------------------------------------------------------------
-   Correção do bug de travamento: mesmo com `hidden = true` aplicado,
-   o CSS `.modal-backdrop { display: grid }` sobrepunha o `[hidden]`
-   do user-agent. Resolvido com `[hidden] { display: none !important }`
-   no CSS + reforço via `style.display` aqui.
+   17. MODAL — Controlador robusto
    ------------------------------------------------------------- */
 const WSModal = {
   el: () => document.getElementById('wsModal'),
@@ -1079,7 +1252,7 @@ const WSModal = {
     if (orgao)   orgao.value   = '';
 
     modal.hidden = false;
-    modal.style.display = '';           // devolve o controle ao CSS (.modal-backdrop)
+    modal.style.display = '';
     modal.classList.remove('closing');
     modal.classList.add('open');
 
@@ -1098,10 +1271,8 @@ const WSModal = {
       if (done) return;
       done = true;
 
-      // Esconde via atributo (CSS `[hidden]` já cuida) E via inline style (reforço)
       modal.hidden = true;
       modal.style.display = 'none';
-
       modal.classList.remove('closing');
 
       const { name, process, orgao } = this.formEls();
@@ -1111,7 +1282,7 @@ const WSModal = {
     };
 
     modal.addEventListener('transitionend', finalize, { once: true });
-    setTimeout(finalize, 220); // fallback determinístico (reduced-motion, etc.)
+    setTimeout(finalize, 220);
   },
 };
 
@@ -1119,7 +1290,7 @@ function openWorkspaceModal()  { WSModal.open();  }
 function closeWorkspaceModal() { WSModal.close(); }
 
 /* -------------------------------------------------------------
-   17. EVENTOS — SIDEBAR
+   18. EVENTOS — SIDEBAR
    ------------------------------------------------------------- */
 function bindWorkspaceList() {
   const list = $('#wsList');
@@ -1209,7 +1380,7 @@ function openFilePickerFor(slotId) {
 }
 
 /* -------------------------------------------------------------
-   18. EVENTOS — COMPLIANCE
+   19. EVENTOS — COMPLIANCE
    ------------------------------------------------------------- */
 function bindCompliance() {
   $('#complianceList').addEventListener('click', (e) => {
@@ -1232,32 +1403,21 @@ function bindCompliance() {
 }
 
 /* -------------------------------------------------------------
-   19. EVENTOS — GLOBAIS + MODAL
+   20. EVENTOS — GLOBAIS
    ------------------------------------------------------------- */
 function bindGlobal() {
   $('#themeToggle').addEventListener('click', () => Theme.toggle());
 
-  // Abertura da modal
   $('#btnNewWorkspace').addEventListener('click', openWorkspaceModal);
   $('#btnNewWorkspaceEmpty').addEventListener('click', openWorkspaceModal);
 
-  // Fechamento da modal
   $('#wsModalClose').addEventListener('click', closeWorkspaceModal);
   $('#wsCancel').addEventListener('click', closeWorkspaceModal);
 
-  // Clique no backdrop fecha a modal
   $('#wsModal').addEventListener('click', (e) => {
     if (e.target.id === 'wsModal') closeWorkspaceModal();
   });
 
-  /* ---------- CRIAÇÃO DE WORKSPACE ----------
-     Fluxo corrigido:
-       1. Valida nome
-       2. createWorkspace() persiste + renderAll()
-       3. closeWorkspaceModal() esconde a modal (CSS [hidden] + inline style)
-       4. Foco no painel principal recém-criado
-       5. Feedback ao usuário
-     ------------------------------------------ */
   $('#wsCreate').addEventListener('click', () => {
     const nameEl    = $('#wsName');
     const processEl = $('#wsProcess');
@@ -1270,17 +1430,14 @@ function bindGlobal() {
       return;
     }
 
-    // 1) Persiste o workspace — internamente chama renderAll()
     const ws = createWorkspace(
       name,
       (processEl?.value || '').trim(),
       (orgaoEl?.value   || '').trim()
     );
 
-    // 2) Fecha a modal (atributo hidden + inline style + animação)
     closeWorkspaceModal();
 
-    // 3) Transfere foco para o painel recém-criado
     requestAnimationFrame(() => {
       const panel = document.getElementById('workspacePanel');
       if (panel && !panel.hidden) {
@@ -1290,11 +1447,9 @@ function bindGlobal() {
       }
     });
 
-    // 4) Feedback final
     if (ws) toast(`Workspace "${ws.name}" pronto para auditoria.`, 'ok');
   });
 
-  // Enter no nome dispara criação (sem duplo disparo)
   $('#wsName').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) {
       e.preventDefault();
@@ -1302,20 +1457,17 @@ function bindGlobal() {
     }
   });
 
-  // ESC fecha a modal
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('#wsModal').hidden) {
       closeWorkspaceModal();
     }
   });
 
-  // Revalidar
   $('#btnReverify').addEventListener('click', () => {
     renderAll();
     toast('Verificação cruzada reexecutada.', 'ok');
   });
 
-  // Reset do workspace ativo
   $('#btnReset').addEventListener('click', () => {
     const ws = activeWs();
     if (!ws) return;
@@ -1330,17 +1482,14 @@ function bindGlobal() {
     toast('Workspace reiniciado.', 'ok');
   });
 
-  // Exportação
   $('#btnExportJSON').addEventListener('click', exportJSON);
   $('#btnExportPDF').addEventListener('click', exportPDF);
 
-  // Copiar hash do workspace
   $('#btnCopyWsHash').addEventListener('click', () => {
     const h = $('#workspaceHash').textContent;
     if (h && h !== '—') navigator.clipboard.writeText(h).then(() => toast('Hash do workspace copiado.', 'ok'));
   });
 
-  // Copiar hashes individuais
   document.addEventListener('click', (e) => {
     const h = e.target.closest('[data-copy]');
     if (!h || !h.dataset.copy) return;
@@ -1349,7 +1498,7 @@ function bindGlobal() {
 }
 
 /* -------------------------------------------------------------
-   20. EXPORTAÇÃO — TRILHA JSON
+   21. EXPORTAÇÃO — TRILHA JSON
    ------------------------------------------------------------- */
 function buildPayload() {
   const ws = activeWs();
@@ -1381,9 +1530,10 @@ function buildPayload() {
       nome: x.file.name,
       tamanhoBytes: x.file.size,
       extensao: x.file.ext,
-      sha256: x.hash,
-      declaredHash: x.declaredHash,
+      hashCAL: x.hash,
+      hashDOC: x.declaredHash,
       hashMatch: x.hashMatch,
+      textSource: x.textSource,
       tag: x.tag,
       tagModule: x.tagModule,
       tagUnique: x.tagUnique,
@@ -1426,7 +1576,7 @@ function exportJSON() {
 }
 
 /* -------------------------------------------------------------
-   21. EXPORTAÇÃO — LAUDO EM PDF (padrão executivo OmniLicit)
+   22. EXPORTAÇÃO — LAUDO EM PDF (padrão executivo OmniLicit)
    ------------------------------------------------------------- */
 let __logoDataURL = null;
 
@@ -1460,12 +1610,12 @@ const ST_BG    = { ok: '#D1FAE5', warn: '#FEF3C7', fail: '#FEE2E2' };
 const SEAL_LABEL = {
   verified: 'VERIFICADO', sealed: 'VERIFICADO', tampered: 'DIVERGENTE',
   partial: 'PARCIAL', 'hash-only': 'PARCIAL', 'tag-only': 'PARCIAL',
-  'signed-only': 'PARCIAL', unsigned: 'SEM SELO',
+  'signed-only': 'PARCIAL', 'cal-only': 'PARCIAL', unsigned: 'SEM SELO',
 };
 const SEAL_COLOR = {
   verified: '#059669', sealed: '#059669', tampered: '#DC2626',
   partial: '#D97706', 'hash-only': '#D97706', 'tag-only': '#D97706',
-  'signed-only': '#D97706', unsigned: '#64748B',
+  'signed-only': '#D97706', 'cal-only': '#D97706', unsigned: '#64748B',
 };
 
 const RULE = (color = '#0D9488', w = 1.2) => ({
@@ -1615,7 +1765,7 @@ function buildIntegritySection(data) {
     [
       { text: 'Módulo', style: 'th' },
       { text: 'Artefato', style: 'th' },
-      { text: 'Hash SHA-256', style: 'th' },
+      { text: 'HASH CAL / HASH DOC', style: 'th' },
       { text: 'Selo digital', style: 'th' },
       { text: 'Tamanho', style: 'th', alignment: 'right' },
     ],
@@ -1623,6 +1773,8 @@ function buildIntegritySection(data) {
       const sealKey = a.sealStatus?.status || 'unsigned';
       const sealLabel = SEAL_LABEL[sealKey] || 'SEM SELO';
       const sealColor = SEAL_COLOR[sealKey] || '#64748B';
+      const cal = a.hashCAL || a.sha256 || '—';
+      const doc = a.hashDOC || a.declaredHash || '—';
       return [
         { text: a.modulo, fontSize: 8, bold: true, color: '#0D9488' },
         {
@@ -1631,7 +1783,12 @@ function buildIntegritySection(data) {
             { text: `${a.extensao.toUpperCase() || 'BIN'}${a.tagUnique ? ' · ' + a.tagUnique : ''}`, fontSize: 6.5, color: '#94A3B8', margin: [0, 1, 0, 0] },
           ],
         },
-        { text: a.sha256 || '—', fontSize: 6.8, color: '#334155' },
+        {
+          stack: [
+            { text: `CAL: ${cal}`, fontSize: 6.4, color: '#334155' },
+            { text: `DOC: ${doc}`, fontSize: 6.4, color: a.hashMatch === false ? '#DC2626' : '#334155', margin: [0, 1, 0, 0] },
+          ],
+        },
         { text: sealLabel, fontSize: 7, bold: true, color: sealColor },
         { text: fmtBytes(a.tamanhoBytes), fontSize: 8, color: '#475569', alignment: 'right' },
       ];
@@ -1640,11 +1797,11 @@ function buildIntegritySection(data) {
 
   return {
     stack: [
-      sectionHeader('1', 'Integridade Documental', 'Verificação criptográfica SHA-256 dos artefatos do workspace'),
+      sectionHeader('1', 'Integridade Documental', 'Verificação cruzada: HASH CAL (local) vs HASH DOC (declarado)'),
       {
         table: {
           headerRows: 1,
-          widths: [55, '*', 150, 65, 55],
+          widths: [50, '*', 160, 65, 55],
           body,
         },
         layout: {
@@ -1659,12 +1816,12 @@ function buildIntegritySection(data) {
           paddingBottom: () => 6,
         },
       },
-      data.artefatos.some(a => a.sealStatus?.status === 'tampered')
+      data.artefatos.some(a => (a.hashMatch === false) || a.sealStatus?.status === 'tampered')
         ? {
             table: {
               widths: ['*'],
               body: [[{
-                text: '⚠  Atenção: foram detectados artefatos com hash divergente. Recomenda-se revisão imediata da cadeia de custódia documental.',
+                text: '⚠  Atenção: foram detectados artefatos com HASH DOC divergente do HASH CAL. Recomenda-se revisão imediata da cadeia de custódia documental.',
                 fontSize: 8, bold: true, color: '#991B1B',
               }]],
             },
@@ -2075,7 +2232,7 @@ async function exportPDF() {
 }
 
 /* -------------------------------------------------------------
-   22. BOOTSTRAP
+   23. BOOTSTRAP
    ------------------------------------------------------------- */
 (function init() {
   Theme.init();
@@ -2093,10 +2250,18 @@ async function exportPDF() {
     toast('Web Crypto indisponível. Sirva o módulo via HTTPS ou localhost.', 'danger', 8000);
   }
 
+  // Aviso se PDF.js ainda não carregou
+  const checkPDFjs = () => {
+    if (window.pdfjsLib || window.pdfjs) return;
+    console.warn('[LicitaAudit] PDF.js ainda não disponível — a extração usará fallback latin1 (pode falhar em PDFs comprimidos).');
+  };
+  setTimeout(checkPDFjs, 2500);
+
   console.info(
     '%c LicitaAudit · Multi-Workspace OmniLicit ',
     'background:#14B8A6;color:#062620;font-weight:700;padding:2px 6px;border-radius:4px',
     `\nWorkspaces restaurados: ${Object.keys(STATE.workspaces).length}`,
-    `\nWorkspace ativo: ${STATE.activeId || '—'}`
+    `\nWorkspace ativo: ${STATE.activeId || '—'}`,
+    `\nPDF.js: ${window.pdfjsLib ? 'disponível' : 'aguardando...'}`
   );
 })();
