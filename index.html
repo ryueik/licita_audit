@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="LicitaAudit — Workspace de Auditoria Integrada do ecossistema OmniLicit (Lei nº 14.133/2021)." />
+  <meta name="description" content="LicitaAudit — Workspace multi-processo do ecossistema OmniLicit (Lei nº 14.133/2021)." />
   <meta name="theme-color" content="#09090B" />
-  <title>LicitaAudit · Workspace | OmniLicit</title>
+  <title>LicitaAudit · Multi-Workspace | OmniLicit</title>
 
   <link rel="icon" href="logo-omnlicit.png" type="image/png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -13,7 +13,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 
-  <!-- pdfMake (CDN) — geração do laudo executivo em PDF -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
 </head>
@@ -24,7 +23,7 @@
     <div class="brand">
       <img src="logo-omnlicit.png" alt="OmniLicit" class="brand-logo" />
       <div class="brand-text">
-        <h1>LicitaAudit<span class="dot">.</span> <small>Workspace</small></h1>
+        <h1>LicitaAudit<span class="dot">.</span> <small>Multi-Workspace</small></h1>
         <p>Auditoria Integrada · Lei nº 14.133/2021 · OmniLicit</p>
       </div>
     </div>
@@ -32,13 +31,13 @@
     <div class="header-center">
       <div class="process-chip" id="processChip" title="Processo em auditoria">
         <span class="process-chip-label">Processo</span>
-        <span class="process-chip-value" id="processChipValue">— não identificado —</span>
+        <span class="process-chip-value" id="processChipValue">— nenhum workspace ativo —</span>
       </div>
     </div>
 
     <div class="header-actions">
       <span class="badge badge-live" id="statusBadge">
-        <span class="pulse"></span> <span id="statusBadgeText">Workspace vazio</span>
+        <span class="pulse"></span> <span id="statusBadgeText">Sem workspace</span>
       </span>
       <button id="btnExportJSON" class="icon-btn" type="button" title="Exportar trilha JSON" aria-label="Exportar trilha JSON">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -65,22 +64,37 @@
     </div>
   </header>
 
-  <!-- ================= BODY (sidebar + main) ================= -->
+  <!-- ================= BODY ================= -->
   <div class="app-body">
 
-    <!-- --------- SIDEBAR --------- -->
-    <aside class="sidebar" aria-label="Documentos do processo">
-      <div class="sidebar-head">
-        <div>
-          <h2>Documentos do Processo</h2>
-          <span class="sidebar-sub" id="sidebarSub">0 de 5 módulos importados</span>
-        </div>
-        <button id="btnBulk" class="ghost-btn" type="button" title="Importar múltiplos arquivos com roteamento automático">
-          + Pacote
-        </button>
-      </div>
+    <!-- ========== SIDEBAR ========== -->
+    <aside class="sidebar" aria-label="Workspaces e documentos do processo">
 
-      <ul class="slot-list" id="slotList"><!-- render dinâmico --></ul>
+      <section class="ws-section">
+        <header class="ws-section-head">
+          <div>
+            <h2>Workspaces</h2>
+            <span class="ws-count" id="wsCount">0 processos</span>
+          </div>
+          <button id="btnNewWorkspace" class="ghost-btn accent" type="button" title="Criar novo workspace">
+            + Novo
+          </button>
+        </header>
+        <ul class="ws-list" id="wsList"></ul>
+      </section>
+
+      <section class="slots-section">
+        <header class="sidebar-head">
+          <div>
+            <h2>Documentos do Processo</h2>
+            <span class="sidebar-sub" id="sidebarSub">Sem workspace ativo</span>
+          </div>
+          <button id="btnBulk" class="ghost-btn" type="button" title="Importar múltiplos arquivos com roteamento automático">
+            + Pacote
+          </button>
+        </header>
+        <ul class="slot-list" id="slotList"></ul>
+      </section>
 
       <div class="sidebar-foot">
         <div class="workspace-hash" id="workspaceHashWrap" hidden>
@@ -89,103 +103,148 @@
             <code id="workspaceHash">—</code>
             <button id="btnCopyWsHash" class="icon-mini" type="button" title="Copiar hash do workspace">⧉</button>
           </div>
-          <span class="hash-hint">Combinado a partir dos hashes individuais dos artefatos carregados.</span>
+          <span class="hash-hint">Fingerprint mestre — combina os hashes dos artefatos carregados.</span>
         </div>
-        <button id="btnReset" class="ghost-btn danger" type="button">Reiniciar Workspace</button>
+        <button id="btnReset" class="ghost-btn danger block" type="button">Reiniciar Workspace Ativo</button>
       </div>
     </aside>
 
-    <!-- --------- MAIN --------- -->
+    <!-- ========== MAIN ========== -->
     <main class="main-content">
 
-      <!-- KPIs -->
-      <section class="kpi-strip" aria-label="Indicadores do workspace">
-        <div class="kpi"><span class="kpi-label">Módulos importados</span><span class="kpi-value" id="kpiModules">0/5</span></div>
-        <div class="kpi"><span class="kpi-label">Hasheria íntegra</span><span class="kpi-value" id="kpiHashes">0</span></div>
-        <div class="kpi"><span class="kpi-label">Selos digitais</span><span class="kpi-value accent" id="kpiSeals">0</span></div>
-        <div class="kpi"><span class="kpi-label">Conformidade global</span><span class="kpi-value accent" id="kpiCompliance">—</span></div>
-        <div class="kpi"><span class="kpi-label">Alertas críticos</span><span class="kpi-value danger" id="kpiCritical">0</span></div>
-      </section>
-
-      <!-- Integridade -->
-      <section class="panel">
-        <header class="panel-head">
-          <div>
-            <h2>Integridade Documental</h2>
-            <span class="panel-hint">Verificação cruzada de hashes SHA-256 dos módulos importados</span>
-          </div>
-          <div class="panel-actions">
-            <button id="btnReverify" class="ghost-btn" type="button">Reverificar</button>
-          </div>
-        </header>
-        <div class="integrity-grid" id="integrityGrid">
-          <div class="empty">Nenhum artefato carregado no workspace.</div>
+      <section class="empty-state" id="emptyState" hidden>
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
         </div>
+        <h2>Nenhum workspace ativo</h2>
+        <p>Crie um workspace informando o número do processo para começar a auditoria integrada (DFD → ETP → TR → Edital → Contrato).</p>
+        <button id="btnNewWorkspaceEmpty" class="primary-btn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Criar Primeiro Workspace
+        </button>
       </section>
 
-      <!-- Divergências -->
-      <section class="panel">
-        <header class="panel-head">
-          <div>
-            <h2>Divergências e Alertas Cruzados</h2>
-            <span class="panel-hint">Consistência entre DFD · ETP · TR · Edital · Contrato</span>
-          </div>
-          <div class="panel-actions">
-            <span class="chip chip-danger" id="chipCritical">0 críticos</span>
-            <span class="chip chip-warn" id="chipWarning">0 avisos</span>
-            <span class="chip chip-info" id="chipInfo">0 informativos</span>
-          </div>
-        </header>
-        <div class="div-table-wrap">
-          <table class="div-table" id="divTable">
-            <thead>
-              <tr>
-                <th style="width:90px">Severidade</th>
-                <th style="width:150px">Categoria</th>
-                <th>Descrição</th>
-                <th style="width:220px">Módulos envolvidos</th>
-                <th style="width:120px">Base legal</th>
-              </tr>
-            </thead>
-            <tbody id="divTableBody">
-              <tr><td colspan="5" class="empty-cell">Nenhuma divergência detectada.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <div id="workspacePanel" hidden>
 
-      <!-- Matriz de conformidade -->
-      <section class="panel">
-        <header class="panel-head">
-          <div>
-            <h2>Matriz de Conformidade — Lei nº 14.133/2021</h2>
-            <span class="panel-hint">Status derivado automaticamente · clique para ajustar manualmente</span>
-          </div>
-          <div class="panel-actions">
-            <span class="chip chip-ok" id="chipOk">0 conformes</span>
-            <span class="chip chip-warn" id="chipWarn">0 pendentes</span>
-            <span class="chip chip-danger" id="chipFail">0 não conformes</span>
-          </div>
-        </header>
-        <div id="complianceList" class="compliance-list"></div>
-      </section>
+        <section class="kpi-strip" aria-label="Indicadores do workspace">
+          <div class="kpi"><span class="kpi-label">Módulos</span><span class="kpi-value" id="kpiModules">0/5</span></div>
+          <div class="kpi"><span class="kpi-label">Selos verificados</span><span class="kpi-value accent" id="kpiSeals">0</span></div>
+          <div class="kpi"><span class="kpi-label">Selos divergentes</span><span class="kpi-value danger" id="kpiTampered">0</span></div>
+          <div class="kpi"><span class="kpi-label">Conformidade</span><span class="kpi-value accent" id="kpiCompliance">—</span></div>
+          <div class="kpi"><span class="kpi-label">Alertas críticos</span><span class="kpi-value danger" id="kpiCritical">0</span></div>
+        </section>
 
+        <section class="panel">
+          <header class="panel-head">
+            <div>
+              <h2>Selos Digitais &amp; Integridade</h2>
+              <span class="panel-hint">Validação cruzada: TAG OmniLicit · Hash declarado · Hash computado (SHA-256)</span>
+            </div>
+            <div class="panel-actions">
+              <button id="btnReverify" class="ghost-btn" type="button">Revalidar</button>
+            </div>
+          </header>
+          <div class="integrity-grid" id="integrityGrid">
+            <div class="empty">Nenhum artefato carregado neste workspace.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head">
+            <div>
+              <h2>Divergências e Alertas Cruzados</h2>
+              <span class="panel-hint">Consistência entre DFD · ETP · TR · Edital · Contrato</span>
+            </div>
+            <div class="panel-actions">
+              <span class="chip chip-danger" id="chipCritical">0 críticos</span>
+              <span class="chip chip-warn" id="chipWarning">0 avisos</span>
+              <span class="chip chip-info" id="chipInfo">0 informativos</span>
+            </div>
+          </header>
+          <div class="div-table-wrap">
+            <table class="div-table">
+              <thead>
+                <tr>
+                  <th style="width:90px">Severidade</th>
+                  <th style="width:150px">Categoria</th>
+                  <th>Descrição</th>
+                  <th style="width:220px">Módulos</th>
+                  <th style="width:120px">Base legal</th>
+                </tr>
+              </thead>
+              <tbody id="divTableBody">
+                <tr><td colspan="5" class="empty-cell">Nenhuma divergência detectada.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head">
+            <div>
+              <h2>Matriz de Conformidade — Lei nº 14.133/2021</h2>
+              <span class="panel-hint">Status automático derivado · clique para ajustar manualmente</span>
+            </div>
+            <div class="panel-actions">
+              <span class="chip chip-ok" id="chipOk">0 conformes</span>
+              <span class="chip chip-warn" id="chipWarn">0 pendentes</span>
+              <span class="chip chip-danger" id="chipFail">0 não conformes</span>
+            </div>
+          </header>
+          <div id="complianceList" class="compliance-list"></div>
+        </section>
+
+      </div>
     </main>
   </div>
 
   <!-- ================= FOOTER ================= -->
   <footer class="app-footer">
-    <span>© <span id="year"></span> OmniLicit · LicitaAudit Workspace</span>
+    <span>© <span id="year"></span> OmniLicit · LicitaAudit</span>
     <span class="sep">·</span>
     <span>Processamento 100% local · nenhum documento é transmitido</span>
     <span class="sep">·</span>
     <span id="footerSession">Sessão iniciada —</span>
   </footer>
 
-  <!-- Inputs ocultos -->
+  <!-- ================= MODAL: Novo Workspace ================= -->
+  <div class="modal-backdrop" id="wsModal" hidden>
+    <div class="modal" role="dialog" aria-labelledby="wsModalTitle">
+      <header class="modal-head">
+        <h3 id="wsModalTitle">Novo Workspace de Auditoria</h3>
+        <button id="wsModalClose" class="icon-mini" type="button" aria-label="Fechar">✕</button>
+      </header>
+      <div class="modal-body">
+        <label class="field">
+          <span>Nome do processo <em>*</em></span>
+          <input id="wsName" type="text" placeholder="Ex.: Pregão Eletrônico 07/2026 — Obras de Pavimentação" maxlength="120" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Número do processo <small>(opcional)</small></span>
+          <input id="wsProcess" type="text" placeholder="Ex.: 2026/000123 ou 000123-45.2026.8.26.0000" maxlength="60" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Órgão / Unidade <small>(opcional)</small></span>
+          <input id="wsOrgao" type="text" placeholder="Ex.: Prefeitura Municipal de Sorocaba — SEMOB" maxlength="120" autocomplete="off" />
+        </label>
+        <p class="modal-hint">
+          Cada workspace mantém seu próprio conjunto de documentos, hashes, selos e laudos.
+          Os dados são gravados localmente no navegador.
+        </p>
+      </div>
+      <footer class="modal-foot">
+        <button id="wsCancel" class="ghost-btn" type="button">Cancelar</button>
+        <button id="wsCreate" class="primary-btn" type="button">Criar Workspace</button>
+      </footer>
+    </div>
+  </div>
+
   <input type="file" id="bulkInput" multiple hidden />
 
-  <!-- Toasts -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
   <script src="script.js"></script>
