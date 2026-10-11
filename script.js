@@ -1,8 +1,8 @@
 /* =============================================================
    LicitaAudit · Multi-Workspace — OmniLicit
-   Motor de auditoria cruzada + extração de texto via PDF.js
-   + parser robusto de selos digitais (TAG + HASH DOC + HASH CAL)
-   + laudo PDF em padrão executivo (3 blocos de paginação)
+   Motor de auditoria cruzada + extração PDF.js
+   + parser OmniLicit robusto (TAG + HASH DOC + HASH CAL)
+   + campos multi-padrão + laudo PDF executivo
    Lei nº 14.133/2021
    ============================================================= */
 'use strict';
@@ -166,13 +166,8 @@ const Theme = {
 };
 
 /* -------------------------------------------------------------
-   5. HASH SHA-256 (Web Crypto) + HELPERS
+   5. HASH SHA-256 + HELPERS
    ------------------------------------------------------------- */
-/**
- * Calcula o HASH CAL (hash local) do arquivo enviado.
- * Usa crypto.subtle.digest('SHA-256', ArrayBuffer) e devolve hex minúsculo.
- * Aceita ArrayBuffer | Uint8Array | Blob.
- */
 async function sha256(input) {
   if (!window.crypto?.subtle) {
     throw new Error('Web Crypto API indisponível (sirva via HTTPS/localhost).');
@@ -188,9 +183,7 @@ async function sha256(input) {
     throw new TypeError('sha256(): entrada deve ser ArrayBuffer, Uint8Array ou Blob.');
   }
   const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 const detectExt = (name) => (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
@@ -201,12 +194,7 @@ const isPDFBuffer = (buffer) => {
 };
 
 /* -------------------------------------------------------------
-   6. EXTRAÇÃO DE TEXTO
-   -------------------------------------------------------------
-   Estratégia em cascata:
-     1. Formatos texto → decode UTF-8 direto
-     2. PDF → PDF.js (reconstrói content streams comprimidas)
-     3. Fallback → latin1 + tentativa de descompressão FlateDecode manual
+   6. EXTRAÇÃO DE TEXTO (PDF.js + fallback latin1)
    ------------------------------------------------------------- */
 async function decompressPdfStreams(latin1Text) {
   if (typeof DecompressionStream === 'undefined') return [];
@@ -237,21 +225,15 @@ async function decompressPdfStreams(latin1Text) {
   return out;
 }
 
-/**
- * Extração de texto real de PDFs via PDF.js.
- * Devolve o conteúdo com quebras de linha preservando blocos verticais.
- */
 async function extractTextFromPDF(buffer) {
   const lib = window.pdfjsLib || window.pdfjs;
   if (!lib) throw new Error('PDF.js não disponível.');
 
-  // Configura worker (uma vez)
   if (lib.GlobalWorkerOptions && !lib.GlobalWorkerOptions.workerSrc) {
     lib.GlobalWorkerOptions.workerSrc =
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
 
-  // PDF.js consome/detaches o buffer → clonar
   const data = buffer.slice(0);
   const pdf = await lib.getDocument({
     data,
@@ -277,11 +259,9 @@ async function extractTextFromPDF(buffer) {
       const y = item.transform?.[5];
       const w = item.width || 0;
 
-      // Quebra de linha quando muda significativamente de Y (nova linha visual)
       if (lastY !== null && y !== null && Math.abs(y - lastY) > 4) {
         pageText += '\n';
       } else if (lastX !== null && x !== null) {
-        // Espaço quando há um gap horizontal natural
         const gap = x - (lastX + lastWidth);
         if (gap > 1.5 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
           pageText += ' ';
@@ -289,7 +269,6 @@ async function extractTextFromPDF(buffer) {
       }
 
       pageText += item.str || '';
-
       if (item.hasEOL && !pageText.endsWith('\n')) pageText += '\n';
 
       lastY = y;
@@ -304,19 +283,13 @@ async function extractTextFromPDF(buffer) {
   return pages.join('\n\n');
 }
 
-/**
- * Extrai texto de qualquer artefato. Devolve { text, source }.
- * source ∈ 'utf-8' | 'pdfjs' | 'latin1' | 'latin1+inflate' | 'mixed'
- */
 async function extractText(file, buffer) {
   const ext = detectExt(file.name);
 
-  // 1. Formatos texto
   if (['txt','csv','json','xml','md','html','htm','xsd','nfe','cte'].includes(ext)) {
     return { text: new TextDecoder('utf-8', { fatal: false }).decode(buffer), source: 'utf-8' };
   }
 
-  // 2. PDF → PDF.js (caminho preferencial)
   const looksLikePDF = ext === 'pdf' || isPDFBuffer(buffer);
   if (looksLikePDF) {
     try {
@@ -329,7 +302,6 @@ async function extractText(file, buffer) {
     }
   }
 
-  // 3. Fallback latin1 (+ inflate manual)
   const latin1 = new TextDecoder('latin1', { fatal: false }).decode(buffer);
   const parts = [latin1];
   let source = 'latin1';
@@ -350,24 +322,37 @@ async function extractText(file, buffer) {
 /* -------------------------------------------------------------
    7. PARSER DE SELO DIGITAL — TAG + HASH DOC (ROBUSTO)
    -------------------------------------------------------------
-   Reconhece (em qualquer combinação de separadores : . - _ / espaço):
-     OMNILICIT::ETP::ABC123::2026
-     OMNILICIT:ETP:ABC123:2026
-     OMNILICIT ETP ABC123 2026
-     OMNILICIT-ETP-ABC123-2026
-     TAG OMNILICIT ETP ABC123 2026
-     TAG OMNILICIT::ETP::ABC123
-     TAG OMNILICIT ETP ABC123
+   Reconhece (qualquer combinação de separadores : . - _ / espaço):
+     OMNILICIT::ETP::ABC123::2026    OMNILICIT:ETP:ABC123:2026
+     OMNILICIT ETP ABC123 2026       OMNILICIT-ETP-ABC123-2026
+     OMNILICIT.ETP.ABC123.2026       TAG OMNILICIT ETP ABC123 2026
+     TAG OMNILICIT::ETP::ABC123      TAG OMNILICIT ETP ABC123
+     (e variações com quebra de linha)
 
-   HASH DOC (declarado):
-     HASH DOC: <64 hex>
-     HASH DOCUMENTO: <64 hex>
-     HASH SHA-256: <64 hex>
-     SHA-256: <64 hex>
-     INTEGRIDADE: <64 hex>
-     <64 hex isolado>
+   HASH DOC (declarado) — 4 camadas:
+     [1] Prefixado: HASH DOC: / SHA-256: / INTEGRIDADE: / DIGEST: / CHECKSUM: <64hex>
+     [2] Próximo a palavras-chave (janela 160 chars)
+     [3] Hash quebrado em 2 linhas (32+32 hex)
+     [4] Fallback: primeiro <64hex> isolado
    ------------------------------------------------------------- */
-const OMNI_STOPWORDS = /^(WORKSPACE|SYSTEM|MODULE|SISTEMA|PLATAFORMA|MODULO|DOC|DOCUMENTO|HASH|TAG|SHA|SEAL|SELO|LICITAUDIT|OMNILICIT)$/i;
+const OMNI_STOPWORDS = /^(WORKSPACE|SYSTEM|MODULE|SISTEMA|PLATAFORMA|MODULO|DOC|DOCUMENTO|HASH|TAG|SHA|SEAL|SELO|LICITAUDIT|OMNILICIT|ICP|BRASIL|PADES|PKCS|CMS|XMLDSIG|UTF|ISO|PDF)$/i;
+
+function normalizeExtractedText(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, ' ')
+    .replace(/\u00AD/g, '')
+    .replace(/[ \t]+/g, ' ');
+}
+
+function buildTextViews(text) {
+  const raw = normalizeExtractedText(text);
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  const dehyphenated = raw.replace(/([A-Za-z0-9:_\-])\s*\n\s*([A-Za-z0-9:_\-])/g, '$1$2');
+  const ultraCompact = raw.replace(/\s+/g, '');
+  return { raw, compact, dehyphenated, ultraCompact, all: [raw, compact, dehyphenated, ultraCompact] };
+}
 
 function extractOmniSeal(rawText) {
   const out = {
@@ -376,71 +361,83 @@ function extractOmniSeal(rawText) {
     primaryTag: null,
     primaryHash: null,
     declaredAt: null,
+    debug: { textLength: 0, viewHits: {} },
   };
-
   if (!rawText || typeof rawText !== 'string') return out;
 
-  // Três visões do texto para cobrir todas as formas de espaçamento
-  const raw = rawText;
-  const compact = rawText.replace(/\s+/g, ' ').trim();
-  const ultraCompact = rawText.replace(/\s+/g, '');
+  const views = buildTextViews(rawText);
+  out.debug.textLength = views.raw.length;
 
   /* ===== TAGs ===== */
   const tagPatterns = [
-    // OMNILICIT::MODULO::TAG[::ANO] — colons separando
-    /OMNILICIT\s*[:]{1,2}\s*([A-Z][A-Z0-9_]{1,15})\s*[:]{1,2}\s*([A-Z0-9][A-Z0-9_\-]{3,64})(?:\s*[:]{1,2}\s*(\d{2,4}))?/gi,
-    // TAG OMNILICIT MODULO TAG [ANO] — prefixo "TAG"
-    /TAG\s+OMNILICIT[\s:._\-\/]+([A-Z][A-Z0-9_]{1,15})[\s:._\-\/]+([A-Z0-9][A-Z0-9_\-]{3,64})(?:[\s:._\-\/]+(\d{2,4}))?/gi,
-    // OMNILICIT MODULO TAG [ANO] — separadores mistos
-    /OMNILICIT[\s:._\-\/]+([A-Z][A-Z0-9_]{1,15})[\s:._\-\/]+([A-Z0-9][A-Z0-9_\-]{3,64})(?:[\s:._\-\/]+(\d{2,4}))?/gi,
+    /OMNILICIT\s*[:]{1,2}\s*([A-Z][A-Z0-9_]{1,20})\s*[:]{1,2}\s*([A-Z0-9][A-Z0-9_\-]{2,64})(?:\s*[:]{1,2}\s*(\d{2,4}))?/gi,
+    /TAG\s+OMNILICIT\s*[:]{0,2}\s*([A-Z][A-Z0-9_]{1,20})\s*[:]{0,2}\s*([A-Z0-9][A-Z0-9_\-]{2,64})(?:\s*[:]{0,2}\s*(\d{2,4}))?/gi,
+    /OMNILICIT[\s:._\-\/]{1,3}([A-Z][A-Z0-9_]{1,20})[\s:._\-\/]{1,3}([A-Z0-9][A-Z0-9_\-]{2,64})(?:[\s:._\-\/]{1,3}(\d{2,4}))?/gi,
   ];
 
   for (const re of tagPatterns) {
-    re.lastIndex = 0;
+    for (const txt of views.all) {
+      if (!txt) continue;
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(txt)) !== null && out.tags.length < 60) {
+        if (OMNI_STOPWORDS.test(m[1])) continue;
+        const before = out.tags.length;
+        pushTag(out.tags, m[1], m[2], m[3], m[0]);
+        if (out.tags.length > before) {
+          const key = re.source.slice(0, 24);
+          out.debug.viewHits[key] = (out.debug.viewHits[key] || 0) + 1;
+        }
+      }
+    }
+  }
+
+  /* ===== HASH DOC ===== */
+  // Camada 1: prefixado
+  const prefixRe = /\b(?:HASH\s*(?:DOC(?:UMENTO)?|SHA[\s\-_]?256|DE\s*INTEGRIDADE)?|SHA[\s\-_]?256|INTEGRIDADE(?:\s*DO\s*DOCUMENTO)?|DIGEST(?:\s*SHA[\s\-_]?256)?|CHECKSUM|CARIMBO(?:\s*DIGITAL)?)\s*[:=\-]?\s*([A-Fa-f0-9]{64})\b/gi;
+  for (const txt of views.all) {
+    if (!txt) continue;
+    prefixRe.lastIndex = 0;
     let m;
-    while ((m = re.exec(compact)) !== null && out.tags.length < 40) {
-      if (OMNI_STOPWORDS.test(m[1])) continue;
-      pushTag(out.tags, m[1], m[2], m[3], m[0]);
+    while ((m = prefixRe.exec(txt)) !== null && out.declaredHashes.length < 20) {
+      pushHash(out.declaredHashes, m[1], m[0].trim(), 'prefix');
     }
   }
 
-  // Ultra compacto (sem espaços) — fallback para PDFs que concatenam tudo
-  if (!out.tags.length) {
-    const re = /OMNILICIT:?:?([A-Z][A-Z0-9_]{1,15}):?:?([A-Z0-9][A-Z0-9_\-]{3,64}):?:?(\d{2,4})?/gi;
+  // Camada 2: próximo a palavras-chave
+  if (!out.declaredHashes.length) {
+    const nearRe = /\b(?:selo|assinatura|verifica|autentica|integridade|confer[êe]ncia|rodap[ée]|carimbo|documento|oficial|original)[^\n]{0,160}?\b([A-Fa-f0-9]{64})\b/gi;
+    for (const txt of [views.raw, views.compact, views.dehyphenated]) {
+      if (!txt) continue;
+      nearRe.lastIndex = 0;
+      let m;
+      while ((m = nearRe.exec(txt)) !== null && out.declaredHashes.length < 10) {
+        pushHash(out.declaredHashes, m[1], m[0].trim(), 'near');
+      }
+    }
+  }
+
+  // Camada 3: hash quebrado em 2 linhas
+  if (!out.declaredHashes.length) {
+    const splitRe = /\b([A-Fa-f0-9]{32})\s*\n\s*([A-Fa-f0-9]{32})\b/g;
     let m;
-    while ((m = re.exec(ultraCompact)) !== null && out.tags.length < 40) {
-      if (OMNI_STOPWORDS.test(m[1])) continue;
-      pushTag(out.tags, m[1], m[2], m[3], m[0]);
+    while ((m = splitRe.exec(views.raw)) !== null && out.declaredHashes.length < 10) {
+      pushHash(out.declaredHashes, m[1] + m[2], m[0].trim(), 'split');
     }
   }
 
-  /* ===== HASH DOC (declarado) ===== */
-  // Camada 1: prefixado (HASH DOC, SHA-256, INTEGRIDADE...)
-  const hashPrefixed = /(?:HASH\s*(?:DOC(?:UMENTO)?|SHA[\s\-_]?256|DE\s*INTEGRIDADE)?|SHA[\s\-_]?256|INTEGRIDADE(?:\s*DO\s*DOCUMENTO)?|DIGEST|CHECKSUM|CHAVE)\s*[:=\-]?\s*([A-Fa-f0-9]{64})/gi;
-  let m;
-  while ((m = hashPrefixed.exec(compact)) !== null && out.declaredHashes.length < 20) {
-    out.declaredHashes.push({ value: m[1].toUpperCase(), raw: m[0].trim() });
-  }
-
-  // Camada 2: 64 hex próximo a palavras-chave (janela de 120 chars)
+  // Camada 4: primeiro 64-hex isolado
   if (!out.declaredHashes.length) {
-    const near = /(?:selo|assinatura|verifica|autentica|integridade|confer[êe]ncia|rodap[ée]|hash)[^\n]{0,120}?\b([A-Fa-f0-9]{64})\b/gi;
-    while ((m = near.exec(raw)) !== null && out.declaredHashes.length < 10) {
-      out.declaredHashes.push({ value: m[1].toUpperCase(), raw: m[0].trim() });
-    }
-  }
-
-  // Camada 3: primeiro 64-hex isolado (fallback universal)
-  if (!out.declaredHashes.length) {
-    const any = /\b([A-Fa-f0-9]{64})\b/g;
-    while ((m = any.exec(raw)) !== null && out.declaredHashes.length < 10) {
-      out.declaredHashes.push({ value: m[1].toUpperCase(), raw: m[1] });
+    const anyRe = /\b([A-Fa-f0-9]{64})\b/g;
+    let m;
+    while ((m = anyRe.exec(views.raw)) !== null && out.declaredHashes.length < 10) {
+      pushHash(out.declaredHashes, m[1], m[1], 'fallback');
     }
   }
 
   /* ===== Data do selo ===== */
-  const dateRe = /(?:emitido|assinado|gerado|selado|carimbado)\s*(?:em)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i;
-  const dm = raw.match(dateRe);
+  const dateRe = /(?:emitido|assinado|gerado|selado|carimbado|publicado|autenticado)\s*(?:em)?\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i;
+  const dm = views.raw.match(dateRe);
   if (dm) out.declaredAt = dm[1];
 
   out.primaryTag  = out.tags[0] || null;
@@ -456,9 +453,16 @@ function pushTag(arr, mod, uniq, year, raw) {
   if (!M || !U) return;
   if (arr.some(t => t.module === M && t.unique === U && t.year === Y)) return;
   arr.push({
-    module: M, unique: U, year: Y, raw: String(raw).trim(),
+    module: M, unique: U, year: Y,
+    raw: String(raw).trim().replace(/\s+/g, ' '),
     full: `OMNILICIT::${M}::${U}${Y ? '::' + Y : ''}`,
   });
+}
+
+function pushHash(arr, value, raw, source) {
+  const V = String(value).toUpperCase();
+  if (arr.some(h => h.value === V)) return;
+  arr.push({ value: V, raw: String(raw).trim().replace(/\s+/g, ' ').slice(0, 120), source });
 }
 
 function validateTagModule(slotId, tagModule) {
@@ -506,40 +510,33 @@ function inspectSignature(file, buffer) {
 
 /* -------------------------------------------------------------
    9. PROCESSAMENTO DO ARQUIVO
-   -------------------------------------------------------------
-   Etapas:
-     1. Lê o arquivo como ArrayBuffer
-     2. Calcula HASH CAL (SHA-256 local do arquivo enviado)
-     3. Extrai texto (PDF.js / latin1)
-     4. Lê TAG + HASH DOC declarados
-     5. Compara HASH CAL vs HASH DOC → hashMatch
-     6. Determina selo estrutural (PAdES/PKCS#7/XMLDSig)
    ------------------------------------------------------------- */
 async function processFile(file) {
   const buffer = await file.arrayBuffer();
-
-  // HASH CAL — hash local do arquivo recebido
   const computedHash = await sha256(buffer);
-
   const ext = detectExt(file.name);
   const { text, source: textSource } = await extractText(file, buffer);
   const signature = inspectSignature(file, buffer);
   const seal = extractOmniSeal(text);
 
   const declaredHash = seal.primaryHash || null;
-  const hashMatch = declaredHash ? (declaredHash.toUpperCase() === computedHash.toUpperCase()) : null;
+  const hashMatch = declaredHash
+    ? (declaredHash.toUpperCase() === computedHash.toUpperCase())
+    : null;
 
   return {
     file: { name: file.name, size: file.size, ext, mime: file.type || '' },
-    hash: computedHash,              // HASH CAL
-    declaredHash,                    // HASH DOC
-    hashMatch,                       // true | false | null
+    hash: computedHash,
+    declaredHash,
+    hashMatch,
     textLength: text.length,
     textSource,
     tag: seal.primaryTag?.full || null,
     tagModule: seal.primaryTag?.module || null,
     tagUnique: seal.primaryTag?.unique || null,
     tagYear: seal.primaryTag?.year || null,
+    tagCandidates: seal.tags.slice(0, 5),
+    hashCandidates: seal.declaredHashes.slice(0, 5),
     signature,
     seal,
     fields: extractFields(text, ext),
@@ -548,14 +545,6 @@ async function processFile(file) {
   };
 }
 
-/**
- * Determina o status visual do selo a partir dos hashes e assinatura.
- * Regra de ouro:
- *   - HASH DOC presente e DIFERENTE do HASH CAL → tampered (crítico)
- *   - HASH DOC presente e IGUAL + TAG presente → verified
- *   - Apenas TAG ou apenas HASH → partial
- *   - Nada → unsigned
- */
 function computeSealStatus(slot) {
   const hasTag = !!slot.tag;
   const hasDeclaredHash = !!slot.declaredHash;
@@ -588,7 +577,7 @@ function computeSealStatus(slot) {
 }
 
 /* -------------------------------------------------------------
-   10. EXTRAÇÃO DE CAMPOS
+   10. EXTRAÇÃO DE CAMPOS — Mapeamento amplo e multi-padrão
    ------------------------------------------------------------- */
 function toNumberBR(s) {
   if (s == null) return null;
@@ -601,34 +590,101 @@ function toNumberBR(s) {
   return Number.isFinite(v) ? v : null;
 }
 
-function extractFields(text, ext) {
+function extractFields(rawText, ext) {
   const f = {};
+  if (!rawText) return f;
+
+  const text = normalizeExtractedText(rawText);
+
   if (ext === 'json') {
     try {
       const obj = JSON.parse(text);
       if (obj && typeof obj === 'object') {
-        f.processo = obj.processo || obj.processNumber || obj.numeroProcesso || null;
-        f.objeto   = obj.objeto   || obj.object || null;
+        f.processo = obj.processo || obj.processNumber || obj.numeroProcesso || obj.numProcesso || null;
+        f.objeto   = obj.objeto   || obj.object || obj.descricaoObjeto || null;
         f.quantidade = obj.quantidade ?? obj.qtd ?? obj.quantity ?? null;
         f.unidade  = obj.unidade  || obj.unit || null;
-        f.valorEstimado = obj.valorEstimado ?? obj.valor ?? obj.estimatedValue ?? null;
-        f.orgao = obj.orgao || obj.org || obj.unidadeGestora || null;
-        f.uasg  = obj.uasg || null;
-        f.data  = obj.data || obj.date || null;
+        f.valorEstimado = obj.valorEstimado ?? obj.valor ?? obj.valorTotal ?? obj.estimatedValue ?? null;
+        f.orgao    = obj.orgao || obj.org || obj.unidadeGestora || obj.entidade || null;
+        f.uasg     = obj.uasg || null;
+        f.data     = obj.data || obj.date || null;
         return cleanFields(f);
       }
     } catch { /* segue regex */ }
   }
 
-  const first = (re) => { const m = text.match(re); return m ? (m[1] || '').trim() : null; };
-  f.processo = first(/processo(?:\s+n?[º°.:]*)?\s*[:\-]?\s*([\w./-]{4,40})/i);
-  f.objeto   = first(/objeto\s*(?:do\s+processo|da\s+contrata[çc][ãa]o)?\s*[:\-]\s*([^\n\r]{10,300})/i);
-  f.quantidade = first(/(?:quantidade|qtd\.?|quantitativo)\s*[:\-]?\s*([\d.,]{1,20})/i);
-  f.unidade    = first(/unidade\s*(?:de\s*medida)?\s*[:\-]?\s*([A-Za-zçãáéíóúâêô]{1,15})/i);
-  f.valorEstimado = first(/(?:valor\s+(?:estimado|total|global|de\s+refer[êe]ncia)?)\s*[:\-]?\s*R?\$?\s*([\d.,]{3,25})/i);
-  f.orgao = first(/(?:[óo]rg[ãa]o|unidade\s+gestora|entidade)\s*[:\-]\s*([^\n\r]{3,120})/i);
-  f.uasg  = first(/uasg\s*[:\-]?\s*(\d{6})/i);
-  f.data  = first(/data\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const firstMulti = (patterns) => {
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m) {
+        const v = (m[1] || m[2] || '').trim();
+        if (v) return v;
+      }
+    }
+    return null;
+  };
+
+  // PROCESSO
+  f.processo = firstMulti([
+    /processo\s+(?:administrativo|licitat[óo]rio)\s*(?:n[º°.]?\s*)?[:\-]?\s*([\w./\-]{4,60})/i,
+    /n[º°.]?\s*(?:do\s+)?processo\s*[:\-]?\s*([\w./\-]{4,60})/i,
+    /processo\s*(?:n[º°.]?)?\s*[:\-]\s*([\w./\-]{4,60})/i,
+    /\bproc\.?\s*(?:adm\.?|licitat[óo]rio)?\s*(?:n[º°.]?)?\s*[:\-]?\s*([\w./\-]{4,60})/i,
+    /\bp\.?\s*a\.?\s*[:\-]\s*([\w./\-]{4,60})/i,
+    /\bpreg[ãa]o\s+(?:eletr[ôo]nico\s+)?(?:n[º°.]?\s*)?([\w./\-]{3,40})/i,
+  ]);
+
+  // OBJETO (captura multi-linha até próximo rótulo)
+  f.objeto = firstMulti([
+    /descri[çc][ãa]o\s+do\s+objeto\s*[:\-]\s*([\s\S]{8,600}?)(?=\n\s*[a-zçãáéíóúâêô]+\s*[:\-]|\n{2,}|$)/i,
+    /objeto\s+da\s+contrata[çc][ãa]o\s*[:\-]\s*([\s\S]{8,600}?)(?=\n\s*[a-zçãáéíóúâêô]+\s*[:\-]|\n{2,}|$)/i,
+    /objeto\s+do\s+processo\s*[:\-]\s*([\s\S]{8,600}?)(?=\n\s*[a-zçãáéíóúâêô]+\s*[:\-]|\n{2,}|$)/i,
+    /objeto\s*(?:licitat[óo]rio)?\s*[:\-]\s*([^\n\r]{8,500})/i,
+    /objeto\s*[:\-]\s*([^\n\r]{8,500})/i,
+  ]);
+
+  // VALOR ESTIMADO
+  f.valorEstimado = firstMulti([
+    /valor\s+(?:total\s+|global\s+)?estimado\s*[:\-]?\s*R?\$?\s*([\d.,]{3,30})/i,
+    /valor\s+de\s+refer[êe]ncia\s*[:\-]?\s*R?\$?\s*([\d.,]{3,30})/i,
+    /valor\s+(?:m[áa]ximo|previsto|or[çc]ado)\s*[:\-]?\s*R?\$?\s*([\d.,]{3,30})/i,
+    /(?:montante|pre[çc]o)\s+(?:total|global|estimado)\s*[:\-]?\s*R?\$?\s*([\d.,]{3,30})/i,
+    /valor\s*[:\-]?\s*R?\$?\s*([\d.,]{3,30})/i,
+  ]);
+
+  // QUANTIDADE
+  f.quantidade = firstMulti([
+    /quantitativo\s*(?:total|estimad[ao])?\s*[:\-]?\s*([\d.,]{1,25})/i,
+    /quantidade\s*(?:total|estimad[ao])?\s*[:\-]?\s*([\d.,]{1,25})/i,
+    /\bqtd\.?\s*[:\-]?\s*([\d.,]{1,25})/i,
+  ]);
+
+  // UNIDADE
+  f.unidade = firstMulti([
+    /unidade\s+de\s+medida\s*[:\-]?\s*([A-Za-zçãáéíóúâêô]{1,20})/i,
+    /unidade\s*[:\-]?\s*([A-Za-zçãáéíóúâêô]{1,20})/i,
+    /\bunid\.?\s*[:\-]?\s*([A-Za-zçãáéíóúâêô]{1,20})/i,
+  ]);
+
+  // ÓRGÃO
+  f.orgao = firstMulti([
+    /unidade\s+gestora\s*[:\-]\s*([^\n\r]{3,150})/i,
+    /unidade\s+administrativa\s*[:\-]\s*([^\n\r]{3,150})/i,
+    /[óo]rg[ãa]o\s*(?:superior|executor|respons[áa]vel)?\s*[:\-]\s*([^\n\r]{3,150})/i,
+    /entidade\s*[:\-]\s*([^\n\r]{3,150})/i,
+  ]);
+
+  // UASG
+  f.uasg = firstMulti([
+    /uasg\s*(?:n[º°.]?)?\s*[:\-]?\s*(\d{6})/i,
+    /c[óo]digo\s+uasg\s*[:\-]?\s*(\d{6})/i,
+  ]);
+
+  // DATA
+  f.data = firstMulti([
+    /data\s+(?:de\s+)?(?:emiss[ãa]o|elabora[çc][ãa]o|assinatura|publica[çc][ãa]o)\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i,
+    /data\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/i,
+  ]);
 
   return cleanFields(f);
 }
@@ -638,8 +694,11 @@ function cleanFields(f) {
   for (const k of Object.keys(f)) {
     const v = f[k];
     if (v === null || v === undefined || v === '') continue;
-    if (k === 'quantidade' || k === 'valorEstimado') out[k] = typeof v === 'number' ? v : toNumberBR(v);
-    else out[k] = String(v).trim().replace(/\s+/g, ' ');
+    if (k === 'quantidade' || k === 'valorEstimado') {
+      out[k] = typeof v === 'number' ? v : toNumberBR(v);
+    } else {
+      out[k] = String(v).trim().replace(/\s+/g, ' ').slice(0, 500);
+    }
   }
   return out;
 }
@@ -746,6 +805,8 @@ async function loadFileIntoSlot(slotId, file) {
       computedHash: payload.hash,
       hashMatch: payload.hashMatch,
       status: status.status,
+      tagCandidates: payload.tagCandidates,
+      hashCandidates: payload.hashCandidates,
     });
   } catch (err) {
     console.error('[LicitaAudit] erro', err);
@@ -812,7 +873,7 @@ function runCrossChecks() {
     if (x.sealStatus?.status === 'tampered') {
       add('critical', 'Integridade',
         `HASH DOC divergente em ${x.code}`,
-        `O hash computado localmente (HASH CAL) não corresponde ao hash declarado no documento (HASH DOC). Possível adulteração ou reemissão. HASH CAL: ${x.hash.slice(0, 16)}… / HASH DOC: ${(x.declaredHash || '').slice(0, 16)}…`,
+        `O hash computado localmente (HASH CAL) não corresponde ao hash declarado (HASH DOC). HASH CAL: ${x.hash.slice(0, 16)}… / HASH DOC: ${(x.declaredHash || '').slice(0, 16)}…`,
         [x.code], 'Art. 5º', 'hash');
     } else if (x.tagModuleMatch === false) {
       add('critical', 'Identificação',
@@ -1118,7 +1179,7 @@ function renderIntegrity() {
         <div class="int-file" title="${escapeAttr(x.file.name)}">${escapeHTML(x.file.name)}</div>
         <dl class="int-kv">
           <dt>TAG</dt><dd class="tag-value">${tagDisplay}</dd>
-          <dt>HASH CAL</dt><dd class="hash-value" data-copy="${computedFull}" title="Hash local do arquivo — clique para copiar">${escapeHTML(computedFull || '—')}</dd>
+          <dt>HASH CAL</dt><dd class="hash-value" data-copy="${computedFull}" title="Hash local — clique para copiar">${escapeHTML(computedFull || '—')}</dd>
           <dt>HASH DOC</dt>${hashDocDisplay}
           <dt>Selo</dt><dd>${x.signature?.signed ? escapeHTML(x.signature.standard || 'Assinado') : '—'}</dd>
         </dl>
@@ -2250,7 +2311,6 @@ async function exportPDF() {
     toast('Web Crypto indisponível. Sirva o módulo via HTTPS ou localhost.', 'danger', 8000);
   }
 
-  // Aviso se PDF.js ainda não carregou
   const checkPDFjs = () => {
     if (window.pdfjsLib || window.pdfjs) return;
     console.warn('[LicitaAudit] PDF.js ainda não disponível — a extração usará fallback latin1 (pode falhar em PDFs comprimidos).');
